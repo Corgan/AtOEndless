@@ -1,4 +1,5 @@
 using HarmonyLib;
+using HarmonyLib.Tools;
 using System;
 using static AtOEndless.Plugin;
 using System.Collections.Generic;
@@ -10,12 +11,12 @@ using System.Runtime.Serialization;
 using System.Runtime.Serialization.Formatters.Binary;
 using System.Security.Cryptography;
 using System.IO;
+using System.Reflection.Emit;
+using TMPro;
 
 
 /*
     AtOManager.Instance.SwapCharacter
-
-    CharacterWindowUI DrawLevelButtons
 
 */
 
@@ -23,22 +24,259 @@ namespace AtOEndless
 {
     [Serializable]
     public class AtOEndlessSaveData {
-        private string test;
+        private HashSet<string> activeBlessings = [];
 
         public void FillData() {
-            LogInfo($"SET {AtOEndless.testData}");
-            test = AtOEndless.testData;
+            LogInfo($"SET ACTIVE BLESSINGS: {string.Join(", ", AtOEndless.activeBlessings)}");
+            activeBlessings = AtOEndless.activeBlessings;
         }
 
         public void LoadData() {
-            AtOEndless.testData = test;
-            LogInfo($"GET {test}");
+            AtOEndless.activeBlessings = activeBlessings;
+            LogInfo($"GET ACTIVE BLESSINGS: {string.Join(", ", activeBlessings)}");
         }
     }
 
     [HarmonyPatch]
     public class AtOEndless {
-        public static string testData;
+        public static HashSet<string> activeBlessings = [];
+        public static List<string> availableBlessings = [];
+
+        public static Enums.CardType blessingCardType = Enum.GetValues(typeof(Enums.CardType)).Cast<Enums.CardType>().Max() + 1;
+        public static Enums.EventActivation blessingCombatStart = Enum.GetValues(typeof(Enums.EventActivation)).Cast<Enums.EventActivation>().Max() + 1;
+        public static Enums.EventActivation blessingBeginRound = Enum.GetValues(typeof(Enums.EventActivation)).Cast<Enums.EventActivation>().Max() + 2;
+
+        public static CardData GetRandomBlessing(List<string> ignore = null) {
+            List<string> stringList = [..availableBlessings];
+
+            foreach(string activeBlessing in activeBlessings) {
+                CardData cDataBlessing = Globals.Instance.GetCardData(activeBlessing, false);
+                cDataBlessing = Functions.GetCardDataFromCardData(cDataBlessing, "");
+                if(cDataBlessing != null && stringList.Contains(cDataBlessing.Id)) {
+                    LogInfo($"Active Blessing: {cDataBlessing.Id}");
+                    stringList.Remove(cDataBlessing.Id);
+                }
+            }
+
+            if(ignore != null) {
+                foreach(string ignoreBlessing in ignore) {
+                    CardData cDataBlessing = Globals.Instance.GetCardData(ignoreBlessing, false);
+                    cDataBlessing = Functions.GetCardDataFromCardData(cDataBlessing, "");
+                    if(cDataBlessing != null && stringList.Contains(cDataBlessing.Id)) {
+                        LogInfo($"Ignore Blessing: {cDataBlessing.Id}");
+                        stringList.Remove(cDataBlessing.Id);
+                    }
+                }
+            }
+
+            LogInfo($"Blessing Cards: {stringList.Count}");
+
+            int randomCorruptionIndex = UnityEngine.Random.Range(0, stringList.Count);
+            string corruptionIdCard = stringList[randomCorruptionIndex];
+            LogInfo($"Random Corruption Index: {randomCorruptionIndex} - {corruptionIdCard}");
+
+            CardData cDataCorruption = Globals.Instance.GetCardData(corruptionIdCard, false);
+            
+            if(AtOManager.Instance.GetTownTier() == 0) {
+                cDataCorruption = Functions.GetCardDataFromCardData(cDataCorruption, "");
+                if (cDataCorruption != null)
+                    corruptionIdCard = cDataCorruption.Id;
+            }
+            if(AtOManager.Instance.GetTownTier() >= 1) {
+                cDataCorruption = Functions.GetCardDataFromCardData(cDataCorruption, "A");
+                if (cDataCorruption != null)
+                    corruptionIdCard = cDataCorruption.Id;
+            }
+            if(AtOManager.Instance.GetTownTier() >= 2) {
+                cDataCorruption = Functions.GetCardDataFromCardData(cDataCorruption, "B");
+                if (cDataCorruption != null)
+                    corruptionIdCard = cDataCorruption.Id;
+            }
+            if(AtOManager.Instance.GetTownTier() >= 3) {
+                cDataCorruption = Functions.GetCardDataFromCardData(cDataCorruption, "RARE");
+                if (cDataCorruption != null)
+                    corruptionIdCard = cDataCorruption.Id;
+            }
+
+            if(cDataCorruption == null)
+                cDataCorruption = Globals.Instance.GetCardData(corruptionIdCard, false);
+
+            LogInfo($"Got Corruption Card: {cDataCorruption.Id}");
+            return cDataCorruption;
+        }
+
+        public static void BeginMatchBlessings() {
+            LogInfo($"BEGIN MATCH BLESSINGS {string.Join(", ", activeBlessings)}");
+            Hero[] teamHero = Traverse.Create(MatchManager.Instance).Field("TeamHero").GetValue<Hero[]>();
+            LogInfo($"Got Heroes: {teamHero.Length}");
+            NPC[] teamNPC = Traverse.Create(MatchManager.Instance).Field("TeamNPC").GetValue<NPC[]>();
+            LogInfo($"Got NPCs: {teamNPC.Length}");
+
+            foreach(string blessing in activeBlessings) {
+                CardData cardData = MatchManager.Instance.GetCardData(blessing);
+                LogInfo($"Got Blessing Data for {cardData.Id}");
+            }
+        }
+        
+        public static void CombatStartBlessings() {
+            LogInfo($"COMBAT START BLESSINGS {string.Join(", ", activeBlessings)}");
+            foreach(string blessing in activeBlessings) {
+                CardData cardData = MatchManager.Instance.GetCardData(blessing);
+                if(cardData.Item != null && cardData.Item.Activation == blessingCombatStart) {
+                    cardData.EnergyCost = 0;
+                    cardData.Vanish = true;
+                    cardData.CardClass = Enums.CardClass.Boon;
+                    MatchManager.Instance.GenerateNewCard(1, blessing, false, Enums.CardPlace.Vanish);
+                    Hero[] teamHero = Traverse.Create(MatchManager.Instance).Field("TeamHero").GetValue<Hero[]>();
+                    for(int index = 0; index < 4; ++index) {
+                        if(teamHero[index] != null && teamHero[index].Alive) {
+                            teamHero[index].DoItem(blessingCombatStart, cardData, cardData.Item.Id, null, 0, "", 0, null);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        public static void BeginRoundBlessings() {
+            LogInfo($"BEGIN ROUND BLESSINGS {string.Join(", ", activeBlessings)}");
+            foreach(string blessing in activeBlessings) {
+                CardData cardData = MatchManager.Instance.GetCardData(blessing);
+                if(cardData.Item != null && cardData.Item.Activation == blessingBeginRound) {
+                    Hero[] teamHero = Traverse.Create(MatchManager.Instance).Field("TeamHero").GetValue<Hero[]>();
+                    NPC[] teamNPC = Traverse.Create(MatchManager.Instance).Field("TeamNPC").GetValue<NPC[]>();
+                    if(cardData.Item.ItemTarget == Enums.ItemTarget.AllHero) {
+                        for(int index = 0; index < 4; ++index) {
+                            if(teamHero[index] != null && teamHero[index].Alive) {
+                                teamHero[index].DoItem(blessingBeginRound, cardData, cardData.Item.Id, null, 0, "", 0, null);
+                                break;
+                            }
+                        }
+                    } else if(cardData.Item.ItemTarget == Enums.ItemTarget.RandomHero || cardData.Item.ItemTarget == Enums.ItemTarget.Self) {
+                        if(cardData.Item.ItemTarget == Enums.ItemTarget.Self) {
+                            for (int index = 0; index < 4; ++index) {
+                                if(teamHero[index] != null && teamHero[index].Alive)
+                                    teamHero[index].DoItem(blessingBeginRound, cardData, cardData.Item.Id, teamHero[index], 0, "", 0, null);
+                            }
+                        } else {
+                            bool flag4 = false;
+                            while (!flag4) {
+                                int randomIntRange = MatchManager.Instance.GetRandomIntRange(0, 4);
+                                if(teamHero[randomIntRange] != null && teamHero[randomIntRange].Alive) {
+                                    teamHero[randomIntRange].DoItem(blessingBeginRound, cardData, cardData.Item.Id, teamHero[randomIntRange], 0, "", 0, null);
+                                    flag4 = true;
+                                }
+                            }
+                        }
+                    } else if (cardData.Item.ItemTarget == Enums.ItemTarget.AllEnemy) {
+                        for(int index = 0; index < 4; ++index) {
+                            if(teamNPC[index] != null && teamNPC[index].Alive) {
+                                teamNPC[index].DoItem(blessingBeginRound, cardData, cardData.Item.Id, null, 0, "", 0, null);
+                                break;
+                            }
+                        }
+                    } else if (cardData.Item.ItemTarget == Enums.ItemTarget.RandomEnemy || cardData.Item.ItemTarget == Enums.ItemTarget.SelfEnemy) {
+                        if(cardData.Item.ItemTarget == Enums.ItemTarget.SelfEnemy) {
+                            for (int index = 0; index < 4; ++index) {
+                                if(teamNPC[index] != null && teamNPC[index].Alive)
+                                    teamHero[index].DoItem(blessingBeginRound, cardData, cardData.Item.Id, teamHero[index], 0, "", 0, null);
+                            }
+                        } else {
+                            bool flag5 = false;
+                            while (!flag5) {
+                                int randomIntRange = MatchManager.Instance.GetRandomIntRange(0, 4);
+                                if(teamNPC[randomIntRange] != null && teamNPC[randomIntRange].Alive) {
+                                    teamNPC[randomIntRange].DoItem(blessingBeginRound, cardData, cardData.Item.Id, teamNPC[randomIntRange], 0, "", 0, null);
+                                    flag5 = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Enum), nameof(Enum.GetName))]
+        public static void GetName(Type enumType, object value, ref string __result) {
+            if(enumType == typeof(Enums.CardType) && (Enums.CardType) value == blessingCardType) {
+                __result = "Blessing";
+            }
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(ItemCombatIcon), nameof(ItemCombatIcon.DoHover))]
+        public static void DoHover(ItemCombatIcon __instance, bool state, ref CardData ___cardData) {
+            if (!(___cardData == null) && ___cardData.CardType == blessingCardType) {
+                __instance.spriteBackgroundHover.gameObject.SetActive(true);
+            }
+        }
+        
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), nameof(Character.ActivateItem))]
+        public static void ActivateItem(ref Character __instance, Enums.EventActivation theEvent, Character target, int auxInt, string auxString, ref bool ___isHero, ref Item ___itemClass, ref CardData ___cardCasted) {
+            if(MatchManager.Instance == null)
+                return;
+            int timesActivated = -1;
+            foreach(string blessing in activeBlessings) {
+                CardData cardData = MatchManager.Instance.GetCardData(blessing);
+                if(cardData != null) {
+                    ItemData itemData = null;
+                    if(cardData.Item != null)
+                        itemData = cardData.Item;
+                    else if(cardData.ItemEnchantment != null)
+                        itemData = cardData.ItemEnchantment;
+
+                    if(itemData != null && (!itemData.ActivationOnlyOnHeroes || !___isHero) && (itemData.Activation == theEvent || itemData.Activation == Enums.EventActivation.Damaged && theEvent == Enums.EventActivation.DamagedSecondary)) {
+                        if(Globals.Instance.ShowDebug)
+                            Functions.DebugLogGD("[Character/ActivateItem] Checking if " + blessing + " will activate", "item");
+                        LogInfo($"{theEvent} - {cardData.Id} - {__instance.HeroIndex} - {itemData.ItemTarget}");
+                        if (___itemClass.DoItem(theEvent, cardData, blessing, __instance, target, auxInt, auxString, 0, ___cardCasted, true)) {
+                            ++timesActivated;
+                            if(Globals.Instance.ShowDebug)
+                                Functions.DebugLogGD("[Character/ActivateItem] " + blessing + "-> OK", "item");
+                            MatchManager.Instance.DoItem(__instance, theEvent, cardData, blessing, target, auxInt, auxString, timesActivated);
+                        } else if (Globals.Instance.ShowDebug)
+                            Functions.DebugLogGD(blessing + " -> XXXXXX", "item");
+                    }
+                }
+            }
+        }
+
+        [HarmonyTranspiler]
+        [HarmonyPatch(typeof(MatchManager), "BeginMatch", MethodType.Enumerator)]
+        public static IEnumerable<CodeInstruction> BeginMatch_Transpiler(IEnumerable<CodeInstruction> instructions, ILGenerator generator) {
+            var codeMatcher = new CodeMatcher(instructions, generator);
+            codeMatcher.MatchStartForward(
+                    new CodeMatch(OpCodes.Call, AccessTools.Method(typeof(MatchManager), "SetInitiatives"))
+                )
+                .InsertAndAdvance(
+                    new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(AtOEndless), "BeginMatchBlessings"))
+                );
+            return codeMatcher.InstructionEnumeration();
+        }
+
+        [HarmonyTranspiler]
+        [HarmonyPatch(typeof(MatchManager), "NextTurnContinue", MethodType.Enumerator)]
+        public static IEnumerable<CodeInstruction> NextTurnContinue_Transpiler(IEnumerable<CodeInstruction> instructions, ILGenerator generator) {
+            var codeMatcher = new CodeMatcher(instructions, generator);
+            codeMatcher.MatchStartForward(
+                    new CodeMatch(OpCodes.Ldfld, AccessTools.Field(typeof(MatchManager), "corruptionItem")),
+                    new CodeMatch(OpCodes.Ldnull)
+                )
+                .InsertAndAdvance(
+                    new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(AtOEndless), "CombatStartBlessings"))
+                )
+                .Advance(4)
+                .MatchStartForward(
+                    new CodeMatch(OpCodes.Ldfld, AccessTools.Field(typeof(MatchManager), "corruptionItem")),
+                    new CodeMatch(OpCodes.Ldnull)
+                )
+                .InsertAndAdvance(
+                    new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(AtOEndless), "BeginRoundBlessings"))
+                );
+            
+            return codeMatcher.InstructionEnumeration();
+        }
 
         [HarmonyPrefix]
         [HarmonyPatch(typeof(Node), nameof(Node.OnMouseUp))]
@@ -53,10 +291,62 @@ namespace AtOEndless
             }
         }
         
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(Functions), nameof(Functions.DebugLogGD))]
+        public static bool DebugLogGD(string str, string type) {
+            StringBuilder stringBuilder = new StringBuilder();
+            if (type != "") {
+                stringBuilder.Append("[");
+                stringBuilder.Append(type.ToUpper());
+                stringBuilder.Append("] ");
+            }
+            stringBuilder.Append(str);
+            LogInfo(stringBuilder.ToString());
+            return false;
+        }
+
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(AtOManager), nameof(AtOManager.BeginAdventure))]
+        public static void BeginAdventure(ref AtOManager __instance) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+            activeBlessings = [];
+        }
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(MatchManager), "FinishLoadTurnData")]
+        public static void FinishLoadTurnData(ref MatchManager __instance) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            List<ItemCombatIcon> iconBlessings = [];
+            int i = 0;
+            foreach(string blessingCardData in activeBlessings) {
+                CardData blessingCard = Globals.Instance.GetCardData(blessingCardData, false);
+                ItemCombatIcon blessingIcon = UnityEngine.Object.Instantiate(__instance.iconCorruption, __instance.iconCorruption.transform.parent);
+                blessingIcon.gameObject.name = "CorruptionIcon";
+                float x = blessingIcon.transform.localPosition.x - 3f - (0.7f * (i % 6));
+                float y = blessingIcon.transform.localPosition.y - (0.7f * Mathf.FloorToInt(i / 6));
+                blessingIcon.transform.localPosition = new Vector3(x, y, blessingIcon.transform.localPosition.z + 3f);
+                LogInfo($"GAME OBJECT {blessingIcon.gameObject.name}");
+                iconBlessings.Add(blessingIcon);
+                i++;
+
+                if(blessingCard != null) {
+                    blessingIcon.transform.gameObject.SetActive(true);
+                    blessingIcon.ShowIconCorruption(blessingCard);
+                    LogInfo($"CARD ID {blessingCard.Id}");
+                } else {
+                    blessingIcon.transform.gameObject.SetActive(false);
+                }
+            }
+        }
+        
+        
         [HarmonyPostfix]
         [HarmonyPatch(typeof(SaveManager), nameof(SaveManager.SaveGame))]
         public static void SaveGame(int slot, bool backUp) {
-            string saveGameName = Traverse.Create(typeof(SaveManager)).Field("saveGameName").GetValue<string>();
             string saveGameExtensionBK = Traverse.Create(typeof(SaveManager)).Field("saveGameExtensionBK").GetValue<string>();
             string saveGameExtension = Traverse.Create(typeof(SaveManager)).Field("saveGameExtension").GetValue<string>();
             byte[] key = Traverse.Create(typeof(SaveManager)).Field("key").GetValue<byte[]>();
@@ -159,6 +449,12 @@ namespace AtOEndless
         [HarmonyPrefix]
         [HarmonyPatch(typeof(Character), nameof(Character.LevelUp))]
         public static void LevelUp(Character __instance, HeroData ___heroData) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if(!AtOManager.Instance.PlayerHasRequirement(Globals.Instance.GetRequirementData("endless_allow_additional_levels")))
+                return;
+
             if(___heroData.HeroSubClass.MaxHp.Length < 9) {
                 int[] maxHp = new int[9];
                 ___heroData.HeroSubClass.MaxHp.CopyTo(maxHp, 4);
@@ -170,6 +466,12 @@ namespace AtOEndless
         [HarmonyPostfix]
         [HarmonyPatch(typeof(SubClassData), nameof(SubClassData.GetTraitLevel))]
         public static void GetTraitLevel(SubClassData __instance, string traitName, ref int __result) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if(!AtOManager.Instance.PlayerHasRequirement(Globals.Instance.GetRequirementData("endless_allow_additional_levels")))
+                return;
+
             Hero[] team = AtOManager.Instance.GetTeam();
             Hero hero = team.Where(hero => hero.SubclassName.ToLower() == __instance.SubClassName.ToLower()).First();
             if(hero.Traits.Length < 9) {
@@ -177,8 +479,13 @@ namespace AtOEndless
                 hero.Traits.CopyTo(traits, 0);
                 hero.Traits = traits;
             }
-            if(hero.Traits[__result] != traitName)
+            if(hero.Traits[__result] != null && hero.Traits[__result] != "" && hero.Traits[__result] != traitName)
                 __result += 4;
+
+                LogInfo($"GetTraitLevel: {__result} - {hero.Traits.Length} - {hero.Traits[__result]}");
+                foreach(string trait in hero.Traits) {
+                    LogInfo($"GetTraitLevel: {trait}");
+                }
         }
         
         [HarmonyReversePatch]
@@ -191,6 +498,9 @@ namespace AtOEndless
         [HarmonyPatch(typeof(CharacterWindowUI), "DrawLevelButtons")]
         public static void DrawLevelButtons(ref CharacterWindowUI __instance, int heroLevel, bool levelUp, ref Hero ___currentHero, ref SubClassData ___currentSCD) {
             if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if(!AtOManager.Instance.PlayerHasRequirement(Globals.Instance.GetRequirementData("endless_allow_additional_levels")))
                 return;
 
             string _color = Globals.Instance.ClassColor[___currentHero.ClassName];
@@ -350,17 +660,17 @@ namespace AtOEndless
         public static string GetRandomPerkType(string[] exclude)
         {
             string[] types = [..(new string[] { "h", "a", "d", "r", "s" }).Where(v => !exclude.Contains(v))];
-            return types[MapManager.Instance.GetRandomIntRange(0, types.Length)];
+            return types[UnityEngine.Random.Range(0, types.Length)];
         }
 
         public static string GetRandomPerkSubtype(string type) {
             if(type == "a") {
                 string[] types = ["bleed", "block", "burn", "chill", "dark", "fury", "insane", "poison", "regeneration", "sharp", "shield", "sight", "spark", "thorns", "vitality", "wet"];
-                return types[MapManager.Instance.GetRandomIntRange(0, types.Length)];
+                return types[UnityEngine.Random.Range(0, types.Length)];
             }
             if(type == "d" || type == "r") {
                 Enums.DamageType[] types = [..Enum.GetValues(typeof(Enums.DamageType)).Cast<Enums.DamageType>().Where(d => !d.Equals(Enums.DamageType.None))];
-                return types[MapManager.Instance.GetRandomIntRange(0, types.Length)].ToString().ToLower();
+                return types[UnityEngine.Random.Range(0, types.Length)].ToString().ToLower();
             }
             return "";
         }
@@ -389,7 +699,7 @@ namespace AtOEndless
                 low = 5;
                 high = 10;
             }
-            return MapManager.Instance.GetRandomIntRange(low, high);
+            return UnityEngine.Random.Range(low, high);
         }
 
         
@@ -399,6 +709,8 @@ namespace AtOEndless
         {
             if(_eventData.EventId == "e_endless_perk") {
                 EventReplyData perkReplyPrefab = Globals.Instance.GetEventData("e_challenge_next").Replys.First<EventReplyData>();
+                int deterministicHashCode = AtOManager.Instance.GetGameId().GetDeterministicHashCode();
+                UnityEngine.Random.InitState(deterministicHashCode);
                 
                 List<EventReplyData> replies = [];
                 for(int i = 0; i < 5; i++) {
@@ -429,15 +741,65 @@ namespace AtOEndless
                     perkReplyData.SsExperienceReward = 0;
                     perkReplyData.SsGoldReward = 0;
                     perkReplyData.SsFinishObeliskMap = false;
-                    perkReplyData.SsEvent = Globals.Instance.GetEventData("e_endless_obelisk");
+                    perkReplyData.SsEvent = AtOManager.Instance.PlayerHasRequirement(Globals.Instance.GetRequirementData("endless_pick_blessing")) ? Globals.Instance.GetEventData("e_endless_blessing") : Globals.Instance.GetEventData("e_endless_obelisk");
                     replies.Add(perkReplyData);
                 }
                 Globals.Instance.GetEventData("e_endless_perk").Replys = [..replies];
             }
 
+            if(_eventData.EventId == "e_endless_blessing") {
+                EventReplyData blessingReplyPrefab = Globals.Instance.GetEventData("e_challenge_next").Replys.First<EventReplyData>();
+
+                int deterministicHashCode = AtOManager.Instance.GetGameId().GetDeterministicHashCode();
+                UnityEngine.Random.InitState(deterministicHashCode);
+
+                
+                List<EventReplyData> replies = [];
+                List<string> exclude = [];
+                for(int i = 0; i < 3; i++) {
+                    CardData blessing = GetRandomBlessing(exclude);
+                    if(blessing != null) {
+                        exclude.Add(blessing.Id);
+                        EventReplyData blessingReplyData = blessingReplyPrefab.ShallowCopy();
+                        blessingReplyData.SsPerkData = null;
+                        blessingReplyData.SsPerkData1 = null;
+                        blessingReplyData.SsAddCard1 = blessing;
+                        blessingReplyData.ReplyShowCard = blessing;
+                        blessingReplyData.ReplyText = blessing.CardName;
+                        blessingReplyData.SsRewardText = "";
+                        blessingReplyData.SsRequirementUnlock = null;
+                        blessingReplyData.SsDustReward = 0;
+                        blessingReplyData.SsExperienceReward = 0;
+                        blessingReplyData.SsGoldReward = 0;
+                        blessingReplyData.SsFinishObeliskMap = false;
+                        blessingReplyData.SsEvent = Globals.Instance.GetEventData("e_endless_obelisk");
+                        replies.Add(blessingReplyData);
+                    }
+                }
+
+                if(replies.Count == 0) {
+                        EventReplyData blessingReplyData = blessingReplyPrefab.ShallowCopy();
+                        blessingReplyData.SsPerkData = null;
+                        blessingReplyData.SsPerkData1 = null;
+                        blessingReplyData.ReplyText = "None left";
+                        blessingReplyData.SsRewardText = "";
+                        blessingReplyData.SsRequirementUnlock = null;
+                        blessingReplyData.SsDustReward = 0;
+                        blessingReplyData.SsExperienceReward = 0;
+                        blessingReplyData.SsGoldReward = 0;
+                        blessingReplyData.SsFinishObeliskMap = false;
+                        blessingReplyData.SsEvent = Globals.Instance.GetEventData("e_endless_obelisk");
+                        replies.Add(blessingReplyData);
+                }
+                Globals.Instance.GetEventData("e_endless_blessing").Replys = [..replies];
+            }
+
             if(_eventData.EventId == "e_endless_obelisk") {
                 EventReplyData obeliskReplyPrefab = Globals.Instance.GetEventData("e_sen34_a").Replys.First();
                 Enums.Zone zone = AtOManager.Instance.GetMapZone(AtOManager.Instance.currentMapNode);
+
+                int deterministicHashCode = AtOManager.Instance.GetGameId().GetDeterministicHashCode();
+                UnityEngine.Random.InitState(deterministicHashCode);
 
                 bool canUlmin = SteamManager.Instance.PlayerHaveDLC("2511580") || (GameManager.Instance.IsMultiplayer() && NetworkManager.Instance.AnyPlayersHaveSku("2511580"));
                 bool canSahti = SteamManager.Instance.PlayerHaveDLC("3185630") || (GameManager.Instance.IsMultiplayer() && NetworkManager.Instance.AnyPlayersHaveSku("3185630"));
@@ -531,7 +893,7 @@ namespace AtOEndless
 
                 int nodeCount = zoneCount == -1 ? possibleNodes.Count : Math.Min(possibleNodes.Count, zoneCount);
                 for(int i = 0; i < nodeCount; i++) {
-                    NodeData selectedNode = possibleNodes[MapManager.Instance.GetRandomIntRange(0, possibleNodes.Count)];
+                    NodeData selectedNode = possibleNodes[UnityEngine.Random.Range(0, possibleNodes.Count)];
 
                     EventReplyData obeliskReplyData = obeliskReplyPrefab.ShallowCopy();
 
@@ -565,6 +927,10 @@ namespace AtOEndless
                 }
 
                 Globals.Instance.GetEventData("e_endless_obelisk").Replys = [..replies];
+
+                //int townTier = AtOManager.Instance.GetActNumberForText() - 1;
+                //if(townTier >= 4)
+                //    AddRandomBlessing();
             }
         }
 
@@ -584,10 +950,41 @@ namespace AtOEndless
             return $"Step into the {portalStrings.Get(zone)} portal.";
         }
 
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(EventManager), "FinalResolution")]
+        public static void FinalResolutionPre(EventManager __instance, EventData ___currentEvent, EventReplyData ___replySelected) {
+            if(___currentEvent.EventId == "e_endless_blessing") {
+                if(___replySelected != null) {
+                    CardData blessingCard = ___replySelected.SsAddCard1;
+
+                    LogInfo($"Selected blessing: {blessingCard.Id}");
+
+                    activeBlessings.Add(blessingCard.Id);
+
+                    if(blessingCard != null) {
+                        activeBlessings.Add(blessingCard.Id);
+                        if(blessingCard.Item != null && blessingCard.Item.MaxHealth > 0) {
+                            Hero[] team = AtOManager.Instance.GetTeam();
+                            for (int index = 0; index < 4; ++index) {
+                                if(team[index] != null && team[index].HeroData != null) {
+                                    team[index].Hp += blessingCard.Item.MaxHealth;
+                                    team[index].HpCurrent += blessingCard.Item.MaxHealth;
+                                    team[index].SetHP();
+
+                                    team[index].ClearCaches();
+                                }
+                            }
+                        }
+                    }
+
+                    ___replySelected.SsAddCard1 = null;
+                }
+            }
+        }
 
         [HarmonyPostfix]
         [HarmonyPatch(typeof(EventManager), "FinalResolution")]
-        public static void FinalResolution(EventManager __instance, EventData ___currentEvent, EventReplyData ___replySelected) {
+        public static void FinalResolutionPost(EventManager __instance, EventData ___currentEvent, EventReplyData ___replySelected) {
             if(___currentEvent.EventId == "e_endless_perk") {
                 if(___replySelected != null) {
                     __instance.result.text = GetRandomPerkDescription(___replySelected.SsPerkData);
@@ -604,10 +1001,10 @@ namespace AtOEndless
                     __result = ScriptableObject.CreateInstance<PerkData>();
                     __result.Icon = Globals.Instance.GetAuraCurseData("burn").Sprite;
                     __result.Id = id.ToLower();
-                    string[] idparts = id.Split("_");
+                    string[] idparts = id.Split('_');
                     string data = idparts[1];
-                    foreach(string part in data.Split("#")) {
-                        string[] parts = part.Split(":");
+                    foreach(string part in data.Split('#')) {
+                        string[] parts = part.Split(':');
                         string type = parts[0];
                         string value = parts[1];
                         switch (type) {
@@ -624,13 +1021,13 @@ namespace AtOEndless
                                 __result.AuracurseBonusValue = int.Parse(value);
                                 break;
                             case "d":
-                                __result.DamageFlatBonus = Enum.Parse<Enums.DamageType>($"{char.ToUpper(value[0])}{value[1..].ToLower()}");
+                                __result.DamageFlatBonus = (Enums.DamageType) Enum.Parse(typeof(Enums.DamageType), $"{char.ToUpper(value[0])}{value.Substring(1).ToLower()}");
                                 break;
                             case "dv":
                                 __result.DamageFlatBonusValue = int.Parse(value);
                                 break;
                             case "r":
-                                __result.ResistModified = Enum.Parse<Enums.DamageType>($"{char.ToUpper(value[0])}{value[1..].ToLower()}");
+                                __result.ResistModified = (Enums.DamageType) Enum.Parse(typeof(Enums.DamageType), $"{char.ToUpper(value[0])}{value.Substring(1).ToLower()}");
                                 break;
                             case "rv":
                                 __result.ResistModifiedValue = int.Parse(value);
@@ -666,6 +1063,383 @@ namespace AtOEndless
         }
 
         [HarmonyPostfix]
+        [HarmonyPatch(typeof(CardItem), "SetCard")]
+        public static void SetCard(CardItem __instance, string id, bool deckScale, Hero _theHero, NPC _theNPC, bool GetFromGlobal, bool _generated,
+            ref CardData ___cardData,
+            ref Transform ___targetTextT,
+            ref Transform ___targetT,
+            ref Transform ___requireTextT,
+            ref Transform ___typeText,
+            ref Transform ___typeTextImage,
+            ref Transform ___descriptionTextT,
+            ref TMP_Text ___descriptionTextTM
+        ) {
+                if(___cardData.CardType == blessingCardType) {
+                
+                    if (___targetTextT.gameObject.activeSelf)
+                        ___targetTextT.gameObject.SetActive(false);
+                    if (___targetT.gameObject.activeSelf)
+                        ___targetT.gameObject.SetActive(false);
+                    if (___requireTextT.gameObject.activeSelf)
+                        ___requireTextT.gameObject.SetActive(false);
+                    if (___typeText.gameObject.activeSelf)
+                        ___typeText.gameObject.SetActive(false);
+                    if (___typeTextImage.gameObject.activeSelf)
+                        ___typeTextImage.gameObject.SetActive(false);
+                    ___descriptionTextT.localPosition = new Vector3(___descriptionTextT.localPosition.x, -0.63f, ___descriptionTextT.localPosition.z);
+                    ___descriptionTextTM.margin = new Vector4(0.02f, -0.02f, 0.02f, -0.04f);
+                
+                }
+            }
+
+        public static CardData AddNewCard(string id, string baseId, ref Dictionary<string, CardData> ____CardsSource, ref Dictionary<string, CardData> ____Cards) {
+            if(____CardsSource.TryGetValue(baseId, out CardData cardPrefab)) {
+                LogInfo($"Adding new card: {id} from {baseId}");
+                CardData newCard = UnityEngine.Object.Instantiate(cardPrefab);
+                newCard.Id = id;
+                newCard.InternalId = id;
+
+                if(newCard.Item != null) {
+                    newCard.Item = UnityEngine.Object.Instantiate(newCard.Item);
+                    newCard.Item.Id = id;
+                }
+                if(newCard.ItemEnchantment != null) {
+                    newCard.ItemEnchantment = UnityEngine.Object.Instantiate(newCard.ItemEnchantment);
+                    newCard.ItemEnchantment.Id = id;
+                }
+
+                ____CardsSource.Add(newCard.Id.ToLower(), newCard);
+                ____Cards.Add(newCard.Id.ToLower(), newCard);
+                return newCard;
+            }
+            return null;
+        }
+
+        private static void InitNewCard(CardData newCard,
+            ref Dictionary<Enums.CardType, List<string>> ____CardItemByType,
+            ref Dictionary<Enums.CardType, List<string>> ____CardListByType,
+            ref Dictionary<Enums.CardClass, List<string>> ____CardListByClass,
+            ref List<string> ____CardListNotUpgraded,
+            ref Dictionary<Enums.CardClass, List<string>> ____CardListNotUpgradedByClass,
+            ref Dictionary<string, List<string>> ____CardListByClassType,
+            ref Dictionary<string, int> ____CardEnergyCost)
+        {
+            newCard.InitClone(newCard.Id);
+
+            ____CardEnergyCost.Add(newCard.Id, newCard.EnergyCost);
+            Globals.Instance.IncludeInSearch(newCard.CardName, newCard.Id);
+            ____CardListByClass[newCard.CardClass].Add(newCard.Id);
+            if (newCard.CardUpgraded == Enums.CardUpgraded.No)
+            {
+                ____CardListNotUpgradedByClass[newCard.CardClass].Add(newCard.Id);
+                ____CardListNotUpgraded.Add(newCard.Id);
+                if (newCard.CardClass == Enums.CardClass.Item)
+                {
+                    if (!____CardItemByType.ContainsKey(newCard.CardType))
+                        ____CardItemByType.Add(newCard.CardType, new List<string>());
+                    ____CardItemByType[newCard.CardType].Add(newCard.Id);
+                }
+            }
+            List<Enums.CardType> cardTypes = newCard.GetCardTypes();
+            for (int index = 0; index < cardTypes.Count; ++index)
+            {
+                if (!____CardListByType.ContainsKey(cardTypes[index]))
+                    ____CardListByType.Add(cardTypes[index], new List<string>());
+                ____CardListByType[cardTypes[index]].Add(newCard.Id);
+                string key2 = Enum.GetName(typeof(Enums.CardClass), newCard.CardClass) + "_" + Enum.GetName(typeof(Enums.CardType), cardTypes[index]);
+                if (!____CardListByClassType.ContainsKey(key2))
+                    ____CardListByClassType[key2] = new List<string>();
+                ____CardListByClassType[key2].Add(newCard.Id);
+                Globals.Instance.IncludeInSearch(Texts.Instance.GetText(Enum.GetName(typeof(Enums.CardType), cardTypes[index])), newCard.Id);
+            }
+
+            newCard.InitClone2();
+            newCard.SetDescriptionNew(true);
+        }
+
+        public static CardData CloneBlessingCard(string cardId,
+            bool isBlessing,
+            ref Dictionary<string, CardData> ____CardsSource,
+            ref Dictionary<string, CardData> ____Cards,
+            ref Dictionary<Enums.CardType, List<string>> ____CardItemByType,
+            ref Dictionary<Enums.CardType, List<string>> ____CardListByType,
+            ref Dictionary<Enums.CardClass, List<string>> ____CardListByClass,
+            ref List<string> ____CardListNotUpgraded,
+            ref Dictionary<Enums.CardClass, List<string>> ____CardListNotUpgradedByClass,
+            ref Dictionary<string, List<string>> ____CardListByClassType,
+            ref Dictionary<string, int> ____CardEnergyCost) {
+
+            if(____Cards.TryGetValue($"endless{cardId}", out CardData oldCard)) {
+                LogInfo($"Got existing card: {oldCard.Id}");
+                return oldCard;
+            }
+
+            LogInfo($"Creating blessing card endless{cardId}");
+
+            CardData newCard = AddNewCard($"endless{cardId}", cardId, ref ____CardsSource, ref ____Cards);
+            newCard.CardName = $"Blessing: {newCard.CardName}";
+
+            if(isBlessing)
+                newCard.CardType = blessingCardType;
+            newCard.CardClass = Enums.CardClass.Special;
+
+            ItemData newCardItem = newCard.Item ?? newCard.ItemEnchantment;
+            if (newCardItem != null) {
+                if(newCardItem.CastedCardType != Enums.CardType.None)
+                    newCardItem.CastedCardType = Enums.CardType.None;
+
+                if(newCardItem.ItemTarget == Enums.ItemTarget.AllEnemy)
+                    newCardItem.ItemTarget = Enums.ItemTarget.AllHero;
+                else if(newCardItem.ItemTarget == Enums.ItemTarget.AllHero)
+                    newCardItem.ItemTarget = Enums.ItemTarget.AllEnemy;
+
+                if(newCardItem.ItemTarget == Enums.ItemTarget.RandomEnemy)
+                    newCardItem.ItemTarget = Enums.ItemTarget.RandomHero;
+                else if(newCardItem.ItemTarget == Enums.ItemTarget.RandomHero)
+                    newCardItem.ItemTarget = Enums.ItemTarget.RandomEnemy;
+
+                if(newCardItem.ItemTarget == Enums.ItemTarget.LowestFlatHpEnemy)
+                    newCardItem.ItemTarget = Enums.ItemTarget.LowestFlatHpHero;
+                else if(newCardItem.ItemTarget == Enums.ItemTarget.LowestFlatHpHero)
+                    newCardItem.ItemTarget = Enums.ItemTarget.LowestFlatHpEnemy;
+
+                if(newCardItem.ItemTarget == Enums.ItemTarget.HighestFlatHpEnemy)
+                    newCardItem.ItemTarget = Enums.ItemTarget.HighestFlatHpHero;
+                else if(newCardItem.ItemTarget == Enums.ItemTarget.HighestFlatHpHero)
+                    newCardItem.ItemTarget = Enums.ItemTarget.HighestFlatHpEnemy;
+
+                if(newCardItem.ItemTarget == Enums.ItemTarget.Self)
+                    newCardItem.ItemTarget = Enums.ItemTarget.SelfEnemy;
+                else if(newCardItem.ItemTarget == Enums.ItemTarget.SelfEnemy)
+                    newCardItem.ItemTarget = Enums.ItemTarget.Self;
+
+                if(newCardItem.CardPlace == Enums.CardPlace.TopDeck && newCardItem.CardNum > 0)
+                    newCardItem.CardPlace = Enums.CardPlace.Hand;
+
+                if(newCardItem.CardPlace == Enums.CardPlace.Hand && newCardItem.CardNum > 0 && (newCardItem.Activation == Enums.EventActivation.BeginRound || newCardItem.Activation == Enums.EventActivation.CorruptionBeginRound))
+                    newCardItem.Activation = Enums.EventActivation.BeginTurnCardsDealt;
+
+                //if(newCardItem.CardNum == 0 && newCardItem.Activation == Enums.EventActivation.CorruptionBeginRound)
+                //    newCardItem.Activation = blessingBeginRound;
+
+                if(newCardItem.CardNum == 0 && newCardItem.Activation == Enums.EventActivation.CorruptionCombatStart)
+                    newCardItem.Activation = blessingCombatStart;
+                
+                if(newCardItem.CardToGain != null) {
+                    newCardItem.CardToGain = CloneBlessingCard(newCardItem.CardToGain.Id, false, ref ____CardsSource, ref ____Cards, ref ____CardItemByType, ref ____CardListByType, ref ____CardListByClass, ref ____CardListNotUpgraded, ref ____CardListNotUpgradedByClass, ref ____CardListByClassType, ref ____CardEnergyCost);
+                    newCardItem.CardToGain.Playable = true;
+                    if(newCard.RelatedCard != "")
+                        newCard.RelatedCard = newCardItem.CardToGain.Id;
+                } else if (newCardItem.CardToGainList != null && newCardItem.CardToGainList.Count > 0) {
+                    List<CardData> newCardsToGain = [];
+                    foreach(CardData card in newCardItem.CardToGainList) {
+                        CardData newCardToGain = CloneBlessingCard(card.Id, false, ref ____CardsSource, ref ____Cards, ref ____CardItemByType, ref ____CardListByType, ref ____CardListByClass, ref ____CardListNotUpgraded, ref ____CardListNotUpgradedByClass, ref ____CardListByClassType, ref ____CardEnergyCost);
+                        newCardToGain.Playable = true;
+                        newCardsToGain.Add(newCardToGain);
+                    }
+                    newCardItem.CardToGainList = newCardsToGain;
+                    if(newCardItem.CardToGainList.Count > 0 && newCard.RelatedCard != "")
+                        newCard.RelatedCard = newCardItem.CardToGainList[0].Id;
+                    if(newCardItem.CardToGainList.Count > 1 && newCard.RelatedCard2 != "")
+                        newCard.RelatedCard2 = newCardItem.CardToGainList[1].Id;
+                    if(newCardItem.CardToGainList.Count > 2 && newCard.RelatedCard3 != "")
+                        newCard.RelatedCard3 = newCardItem.CardToGainList[2].Id;
+                }
+
+                if(newCard.ItemEnchantment != null)
+                    newCard.ItemEnchantment = newCardItem;
+                else
+                    newCard.Item = newCardItem;
+            }
+
+            Traverse.Create(newCard).Field("descriptionId").SetValue("");
+            Traverse.Create(newCard).Field("effectRequired").SetValue("");
+
+            if(newCard.UpgradedFrom != "") {
+                newCard.UpgradedFrom = $"endless{newCard.UpgradedFrom.ToLower()}";
+            }
+
+            if(newCard.UpgradesTo1 != "") {
+                CardData upgradesTo1Card = CloneBlessingCard(newCard.UpgradesTo1.ToLower(), true, ref ____CardsSource, ref ____Cards, ref ____CardItemByType, ref ____CardListByType, ref ____CardListByClass, ref ____CardListNotUpgraded, ref ____CardListNotUpgradedByClass, ref ____CardListByClassType, ref ____CardEnergyCost);
+                newCard.UpgradesTo1 = upgradesTo1Card.Id;
+            }
+
+            if(newCard.UpgradesTo2 != "") {
+                CardData upgradesTo2Card = CloneBlessingCard(newCard.UpgradesTo2.ToLower(), true, ref ____CardsSource, ref ____Cards, ref ____CardItemByType, ref ____CardListByType, ref ____CardListByClass, ref ____CardListNotUpgraded, ref ____CardListNotUpgradedByClass, ref ____CardListByClassType, ref ____CardEnergyCost);
+                newCard.UpgradesTo2 = upgradesTo2Card.Id;
+            }
+
+            if(newCard.UpgradesToRare != null) {
+                CardData upgradesToRareCard = CloneBlessingCard(newCard.UpgradesToRare.Id, true, ref ____CardsSource, ref ____Cards, ref ____CardItemByType, ref ____CardListByType, ref ____CardListByClass, ref ____CardListNotUpgraded, ref ____CardListNotUpgradedByClass, ref ____CardListByClassType, ref ____CardEnergyCost);
+                newCard.UpgradesToRare = upgradesToRareCard;
+            }
+
+            InitNewCard(newCard, ref ____CardItemByType, ref ____CardListByType, ref ____CardListByClass, ref ____CardListNotUpgraded, ref ____CardListNotUpgradedByClass, ref ____CardListByClassType, ref ____CardEnergyCost);
+
+            return newCard;
+        }
+
+        public static List<string> blessingCards = [
+            "armageddon", // YES
+            //"ashysky", // SHUFFLE INTO DECK
+            //"backlash", // NEED DESCRIPTION
+            "bloodpuddle", // YES
+            //"bomblottery",
+            //"burningweapons", // MAKE IT WORK
+            "chaospuddle", // YES
+            "chaoticwind", // YES
+            //"christmastree", // NEED DESCRIPTION
+            "coldfront", // YES
+            "colorfulpuddle", // YES
+            "darkpuddle", // YES
+            "deathgrip", // YES
+            "electricpuddle", //YES
+            "empower", // YES
+            "firecrackers", // YES
+            //"forestallies", // NEED DESCRIPTION
+            //"fungaloutbreak", // ENEMIES?
+            "heavenlyarmaments", // YES
+            //"heavyweaponry", // MAKE IT WORK
+            "hexproof", // YES
+            //"holynight", // FIX
+            "holypuddle", // YES
+            //"hypotermia", // "YOU" PLAY A CARD
+            "icypuddle", // YES
+            "ironclad", // YES
+            "lanternfestival", // YES
+            "lavabursts", // YES
+            "lavapuddle", // YES
+            "livingforest", // YES
+            "lonelyblob", // YES
+            //"meatfeast", // NEED DESCRIPTION
+            //"melancholy",
+            "metalpuddle", // YES
+            //"mysticnight", // FIX
+            //"noxiousparasites",
+            //"pacifism",
+            "poisonfields", // YES
+            "putrefaction", // YES
+            //"resurrection",
+            //"revenge", // "YOU" PLAY A CARD
+            "rosegarden", // YES
+            "sacredground", // YES
+            //"snowfall",
+            //"spookynight", // FIX
+            //"starrynight", // FIX
+            "subzero", // YES
+            //"sugarrush", // INTO DECK
+            "thegrinch", // YES
+            //"thornproliferation", NEED DESCRIPTION
+            //"threedragons", // NEED DESCRIPTION
+            //"threeghost", // NEED DESCRIPTION AND DOESNT WORK
+            "thunderstorm", // YES
+            "toxicpuddle", // YES
+            //"trickortreat", // NEED DESCRIPTION
+            "upwind", // YES
+            "vigorous", // YES
+            "waterpuddle", // YES
+            //"windsofamnesia"
+        ];
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Globals), nameof(Globals.CreateCardClones))]
+        public static void CreateCardClones(ref Globals __instance,
+        ref Dictionary<string, CardData> ____CardsSource,
+        ref Dictionary<string, CardData> ____Cards,
+        ref Dictionary<Enums.CardType, List<string>> ____CardItemByType,
+        ref Dictionary<Enums.CardType, List<string>> ____CardListByType,
+        ref Dictionary<Enums.CardClass, List<string>> ____CardListByClass,
+        ref List<string> ____CardListNotUpgraded,
+        ref Dictionary<Enums.CardClass, List<string>> ____CardListNotUpgradedByClass,
+        ref Dictionary<string, List<string>> ____CardListByClassType,
+        ref Dictionary<string, int> ____CardEnergyCost
+        ) {
+            if (GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            foreach(string cardId in blessingCards) {
+                CardData blessing = CloneBlessingCard(cardId, true, ref ____CardsSource, ref ____Cards, ref ____CardItemByType, ref ____CardListByType, ref ____CardListByClass, ref ____CardListNotUpgraded, ref ____CardListNotUpgradedByClass, ref ____CardListByClassType, ref ____CardEnergyCost);
+                availableBlessings.Add(blessing.Id);
+            }
+
+            GameManager.Instance.cardSprites = GameManager.Instance.cardSprites.Concat(GameManager.Instance.cardSprites.Where(c => c.name == "card-bg-special")).ToArray();
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Globals), nameof(Globals.GetExperienceByLevel))]
+        public static void GetExperienceByLevel(ref Globals __instance, int level, ref int __result) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if(AtOManager.Instance.PlayerHasRequirement(Globals.Instance.GetRequirementData("endless_allow_additional_levels"))) {
+                if(level == 5)
+                    __result = 2250;
+                if(level == 6)
+                    __result = 3000;
+                if(level == 7)
+                    __result = 4000;
+                if(level == 8)
+                    __result = 6000;
+                if(level >= 9)
+                    __result = 99999;
+            }
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), nameof(Character.CalculateRewardForCharacter))]
+        public static void CalculateRewardForCharacter(ref Character __instance, ref int _experience, ref int __result) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+                
+            if(AtOManager.Instance.PlayerHasRequirement(Globals.Instance.GetRequirementData("endless_allow_additional_levels"))) {
+                int townTier = AtOManager.Instance.GetActNumberForText() - 1;
+                if(townTier >= 5) {
+                    if(AtOManager.Instance.IsChallengeTraitActive("smartheroes"))
+                        _experience += Functions.FuncRoundToInt(_experience * 0.5f);
+
+                    float num1 = 0.1f;
+                    if(__instance.Level > AtOManager.Instance.GetActNumberForText()) {
+                        __result = Functions.FuncRoundToInt(_experience * num1);
+                        return;
+                    }
+
+                    if(__instance.Experience >= Globals.Instance.GetExperienceByLevel(__instance.Level)) {
+                        __result = Functions.FuncRoundToInt(_experience * num1);
+                        return;
+                    }
+
+                    if(__instance.Experience + _experience > Globals.Instance.GetExperienceByLevel(__instance.Level)) {
+                        int num2 = _experience - (Globals.Instance.GetExperienceByLevel(__instance.Level) - __instance.Experience);
+                        __result = Globals.Instance.GetExperienceByLevel(__instance.Level) - __instance.Experience + Functions.FuncRoundToInt((float) num2 * num1);
+                        return;
+                    }
+
+                    __result = _experience;
+                }
+            }
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(OverCharacter), nameof(OverCharacter.DoStats))]
+        public static void DoStats(ref OverCharacter __instance, ref Hero ___hero) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+            if(AtOManager.Instance.PlayerHasRequirement(Globals.Instance.GetRequirementData("endless_allow_additional_levels"))) {
+                StringBuilder stringBuilder = new StringBuilder();
+                stringBuilder.Append("L");
+                stringBuilder.Append(___hero.Level);
+                if(___hero.Level < 9) {
+                    stringBuilder.Append("  <voffset=.15><size=-.5><color=#FFC086>[");
+                    stringBuilder.Append(___hero.Experience);
+                    stringBuilder.Append("/");
+                    stringBuilder.Append(Globals.Instance.GetExperienceByLevel(___hero.Level));
+                    stringBuilder.Append("]");
+                }
+                __instance.experienceText.text = stringBuilder.ToString();
+            }
+        }
+
+        [HarmonyPostfix]
         [HarmonyPatch(typeof(Globals), nameof(Globals.CreateGameContent))]
         public static void CreateGameContent(ref Globals __instance,
         ref Dictionary<string, EventData> ____Events,
@@ -677,11 +1451,6 @@ namespace AtOEndless
         ) {
             if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
                 return;
-
-            ____ExperienceByLevel.Add(5, 1750);
-            ____ExperienceByLevel.Add(6, 2000);
-            ____ExperienceByLevel.Add(7, 2500);
-            ____ExperienceByLevel.Add(8, 3000);
 
             AddNewRequirement("endless_complete_sen", ref ____Requirements);
             AddNewRequirement("endless_complete_faen", ref ____Requirements);
@@ -697,6 +1466,13 @@ namespace AtOEndless
             
             AddNewRequirement("endless_allow_perks", ref ____Requirements);
 
+            AddNewRequirement("endless_allow_blessings", ref ____Requirements);
+            AddNewRequirement("endless_allow_blessings_after_4", ref ____Requirements);
+            AddNewRequirement("endless_allow_blessings_after_void", ref ____Requirements);
+            AddNewRequirement("endless_pick_blessing", ref ____Requirements);
+
+            AddNewRequirement("endless_allow_additional_levels", ref ____Requirements);
+
             AddNewRequirement("endless_zonecount_1", ref ____Requirements);
             AddNewRequirement("endless_zonecount_2", ref ____Requirements);
             AddNewRequirement("endless_zonecount_3", ref ____Requirements);
@@ -704,9 +1480,11 @@ namespace AtOEndless
 
             if(____Events.TryGetValue("e_sen44_a", out EventData eventConfigPrefab)) {
                 EventData eventDataAllowPerks = UnityEngine.Object.Instantiate(eventConfigPrefab);
-                EventData eventDataAllowRepeats = UnityEngine.Object.Instantiate(eventConfigPrefab);
+                EventData eventDataAllowBlessings = UnityEngine.Object.Instantiate(eventConfigPrefab);
+                EventData eventDataAllowAdditionalLevels = UnityEngine.Object.Instantiate(eventConfigPrefab);
                 EventData eventDataRequireAll = UnityEngine.Object.Instantiate(eventConfigPrefab);
                 EventData eventDataUniqueZones = UnityEngine.Object.Instantiate(eventConfigPrefab);
+                EventData eventDataAllowRepeats = UnityEngine.Object.Instantiate(eventConfigPrefab);
                 EventData eventDataZoneCount = UnityEngine.Object.Instantiate(eventConfigPrefab);
 
                 EventReplyData configReplyPrefab = Globals.Instance.GetEventData("e_sen44_a").Replys.First();
@@ -719,13 +1497,60 @@ namespace AtOEndless
                 configReplyAllowPerksYes.ReplyText = "Yes";
                 configReplyAllowPerksYes.SsRewardText = "";
                 configReplyAllowPerksYes.SsRequirementUnlock = Globals.Instance.GetRequirementData("endless_allow_perks");
-                configReplyAllowPerksYes.SsEvent = eventDataRequireAll;
+                configReplyAllowPerksYes.SsEvent = eventDataAllowBlessings;
 
                 configReplyAllowPerksNo.ReplyActionText = Enums.EventAction.None;
                 configReplyAllowPerksNo.ReplyText = "No";
                 configReplyAllowPerksNo.SsRewardText = "";
                 configReplyAllowPerksNo.SsRequirementUnlock = null;
-                configReplyAllowPerksNo.SsEvent = eventDataRequireAll;
+                configReplyAllowPerksNo.SsEvent = eventDataAllowBlessings;
+
+
+                EventReplyData configReplyAllowBlessings = configReplyPrefab.ShallowCopy();
+                EventReplyData configReplyAllowBlessingsAfter4 = configReplyPrefab.ShallowCopy();
+                EventReplyData configReplyAllowBlessingsAfterVoid = configReplyPrefab.ShallowCopy();
+                EventReplyData configReplyAllowBlessingsNo = configReplyPrefab.ShallowCopy();
+
+                configReplyAllowBlessings.ReplyActionText = Enums.EventAction.None;
+                configReplyAllowBlessings.ReplyText = "After every Act";
+                configReplyAllowBlessings.SsRewardText = "";
+                configReplyAllowBlessings.SsRequirementUnlock = Globals.Instance.GetRequirementData("endless_allow_blessings");
+                configReplyAllowBlessings.SsRequirementUnlock2 = Globals.Instance.GetRequirementData("endless_pick_blessing");
+                configReplyAllowBlessings.SsEvent = eventDataAllowAdditionalLevels;
+
+                configReplyAllowBlessingsAfter4.ReplyActionText = Enums.EventAction.None;
+                configReplyAllowBlessingsAfter4.ReplyText = "After every Act starting at 4";
+                configReplyAllowBlessingsAfter4.SsRewardText = "";
+                configReplyAllowBlessingsAfter4.SsRequirementUnlock = Globals.Instance.GetRequirementData("endless_allow_blessings_after_4");
+                configReplyAllowBlessingsAfter4.SsEvent = eventDataAllowAdditionalLevels;
+
+                configReplyAllowBlessingsAfterVoid.ReplyActionText = Enums.EventAction.None;
+                configReplyAllowBlessingsAfterVoid.ReplyText = "After every Void Act";
+                configReplyAllowBlessingsAfterVoid.SsRewardText = "";
+                configReplyAllowBlessingsAfterVoid.SsRequirementUnlock = Globals.Instance.GetRequirementData("endless_allow_blessings_after_void");
+                configReplyAllowBlessingsAfterVoid.SsEvent = eventDataAllowAdditionalLevels;
+
+                configReplyAllowBlessingsNo.ReplyActionText = Enums.EventAction.None;
+                configReplyAllowBlessingsNo.ReplyText = "Disable";
+                configReplyAllowBlessingsNo.SsRewardText = "";
+                configReplyAllowBlessingsNo.SsRequirementUnlock = null;
+                configReplyAllowBlessingsNo.SsEvent = eventDataAllowAdditionalLevels;
+
+
+                EventReplyData configReplyAllowAdditionalLevelsYes = configReplyPrefab.ShallowCopy();
+                EventReplyData configReplyAllowAdditionalLevelsNo = configReplyPrefab.ShallowCopy();
+
+                configReplyAllowAdditionalLevelsYes.ReplyActionText = Enums.EventAction.None;
+                configReplyAllowAdditionalLevelsYes.ReplyText = "Yes";
+                configReplyAllowAdditionalLevelsYes.SsRewardText = "";
+                configReplyAllowAdditionalLevelsYes.SsRequirementUnlock = Globals.Instance.GetRequirementData("endless_allow_additional_levels");
+                configReplyAllowAdditionalLevelsYes.SsEvent = eventDataRequireAll;
+
+                configReplyAllowAdditionalLevelsNo.ReplyActionText = Enums.EventAction.None;
+                configReplyAllowAdditionalLevelsNo.ReplyText = "No";
+                configReplyAllowAdditionalLevelsNo.SsRewardText = "";
+                configReplyAllowAdditionalLevelsNo.SsRequirementUnlock = null;
+                configReplyAllowAdditionalLevelsNo.SsEvent = eventDataRequireAll;
 
 
                 EventReplyData configReplyRequireAllYes = configReplyPrefab.ShallowCopy();
@@ -817,6 +1642,22 @@ namespace AtOEndless
                 eventDataAllowPerks.Init();
                 ____Events.Add(eventDataAllowPerks.EventId.ToLower(), eventDataAllowPerks);
 
+                eventDataAllowBlessings.EventName = "Endless Obelisk";
+                eventDataAllowBlessings.Description = "Allow Blessings";
+                eventDataAllowBlessings.DescriptionAction = "Allow randomized blessings at the end of acts?";
+                eventDataAllowBlessings.EventId = "e_endless_allow_blessings";
+                eventDataAllowBlessings.Replys = [configReplyAllowBlessings, configReplyAllowBlessingsAfter4, configReplyAllowBlessingsAfterVoid, configReplyAllowBlessingsNo];
+                eventDataAllowBlessings.Init();
+                ____Events.Add(eventDataAllowBlessings.EventId.ToLower(), eventDataAllowBlessings);
+
+                eventDataAllowAdditionalLevels.EventName = "Endless Obelisk";
+                eventDataAllowAdditionalLevels.Description = "Allow Additional Levels";
+                eventDataAllowAdditionalLevels.DescriptionAction = "Allow additional levels past 5, allowing you to select traits from the other side of the tree?";
+                eventDataAllowAdditionalLevels.EventId = "e_endless_allow_additional_levels";
+                eventDataAllowAdditionalLevels.Replys = [configReplyAllowAdditionalLevelsYes, configReplyAllowAdditionalLevelsNo];
+                eventDataAllowAdditionalLevels.Init();
+                ____Events.Add(eventDataAllowAdditionalLevels.EventId.ToLower(), eventDataAllowAdditionalLevels);
+
                 eventDataRequireAll.EventName = "Endless Obelisk";
                 eventDataRequireAll.Description = "Require All Before Void";
                 eventDataRequireAll.DescriptionAction = "Require all other acts to be completed per cycle before void act?";
@@ -873,6 +1714,19 @@ namespace AtOEndless
                 eventDataEndlessPerk.Init();
                 ____Events.Add(eventDataEndlessPerk.EventId.ToLower(), eventDataEndlessPerk);
             }
+
+            if(____Events.TryGetValue("e_challenge_next", out EventData blessingPrefab)) {
+                EventData eventDataEndlessBlessing = UnityEngine.Object.Instantiate<EventData>(blessingPrefab);
+                eventDataEndlessBlessing.EventName = "Endless Obelisk";
+                eventDataEndlessBlessing.Description = "Pick yo blessing";
+                eventDataEndlessBlessing.DescriptionAction = "Choose it yo";
+                eventDataEndlessBlessing.EventId = "e_endless_blessing";
+                eventDataEndlessBlessing.Requirement = Globals.Instance.GetRequirementData("endless_pick_blessing");
+                eventDataEndlessBlessing.Replys = [];
+                eventDataEndlessBlessing.ReplyRandom = 0;
+                eventDataEndlessBlessing.Init();
+                ____Events.Add(eventDataEndlessBlessing.EventId.ToLower(), eventDataEndlessBlessing);
+            }
                 
             if (____Cinematics.TryGetValue("intro", out CinematicData introData)) {
                 introData.CinematicEvent = Globals.Instance.GetEventData("e_endless_allow_perks");
@@ -880,33 +1734,33 @@ namespace AtOEndless
             }
                 
             if (____NodeDataSource.TryGetValue("sen_34", out NodeData sen34Data)) {
-                sen34Data.NodeEvent = [Globals.Instance.GetEventData("e_endless_perk"), Globals.Instance.GetEventData("e_endless_obelisk")];
-                sen34Data.NodeEventPriority = [0, 1];
+                sen34Data.NodeEvent = [Globals.Instance.GetEventData("e_endless_perk"), Globals.Instance.GetEventData("e_endless_blessing"), Globals.Instance.GetEventData("e_endless_obelisk")];
+                sen34Data.NodeEventPriority = [0, 1, 2];
                 ____NodeDataSource["sen_34"] = sen34Data;
             }
             if (____NodeDataSource.TryGetValue("faen_39", out NodeData faen39Data)) {
-                faen39Data.NodeEvent = [Globals.Instance.GetEventData("e_endless_perk"), Globals.Instance.GetEventData("e_endless_obelisk")];
-                faen39Data.NodeEventPriority = [0, 1];
+                faen39Data.NodeEvent = [Globals.Instance.GetEventData("e_endless_perk"), Globals.Instance.GetEventData("e_endless_blessing"), Globals.Instance.GetEventData("e_endless_obelisk")];
+                faen39Data.NodeEventPriority = [0, 1, 2];
                 ____NodeDataSource["faen_39"] = faen39Data;
             }
             if (____NodeDataSource.TryGetValue("aqua_36", out NodeData aqua36Data)) {
-                aqua36Data.NodeEvent = [Globals.Instance.GetEventData("e_endless_perk"), Globals.Instance.GetEventData("e_endless_obelisk")];
-                aqua36Data.NodeEventPriority = [0, 1];
+                aqua36Data.NodeEvent = [Globals.Instance.GetEventData("e_endless_perk"), Globals.Instance.GetEventData("e_endless_blessing"), Globals.Instance.GetEventData("e_endless_obelisk")];
+                aqua36Data.NodeEventPriority = [0, 1, 2];
                 ____NodeDataSource["aqua_36"] = aqua36Data;
             }
             if (____NodeDataSource.TryGetValue("velka_33", out NodeData velka33Data)) {
-                velka33Data.NodeEvent = [Globals.Instance.GetEventData("e_endless_perk"), Globals.Instance.GetEventData("e_endless_obelisk")];
-                velka33Data.NodeEventPriority = [0, 1];
+                velka33Data.NodeEvent = [Globals.Instance.GetEventData("e_endless_perk"), Globals.Instance.GetEventData("e_endless_blessing"), Globals.Instance.GetEventData("e_endless_obelisk")];
+                velka33Data.NodeEventPriority = [0, 1, 2];
                 ____NodeDataSource["velka_33"] = velka33Data;
             }
             if (____NodeDataSource.TryGetValue("ulmin_40", out NodeData ulmin40Data)) {
-                ulmin40Data.NodeEvent = [Globals.Instance.GetEventData("e_endless_perk"), Globals.Instance.GetEventData("e_endless_obelisk")];
-                ulmin40Data.NodeEventPriority = [0, 1];
+                ulmin40Data.NodeEvent = [Globals.Instance.GetEventData("e_endless_perk"), Globals.Instance.GetEventData("e_endless_blessing"), Globals.Instance.GetEventData("e_endless_obelisk")];
+                ulmin40Data.NodeEventPriority = [0, 1, 2];
                 ____NodeDataSource["ulmin_40"] = ulmin40Data;
             }
             if (____NodeDataSource.TryGetValue("sahti_63", out NodeData sahti63Data)) {
-                sahti63Data.NodeEvent = [Globals.Instance.GetEventData("e_endless_perk"), Globals.Instance.GetEventData("e_endless_obelisk")];
-                sahti63Data.NodeEventPriority = [0, 1];
+                sahti63Data.NodeEvent = [Globals.Instance.GetEventData("e_endless_perk"), Globals.Instance.GetEventData("e_endless_blessing"), Globals.Instance.GetEventData("e_endless_obelisk")];
+                sahti63Data.NodeEventPriority = [0, 1, 2];
                 ____NodeDataSource["sahti_63"] = sahti63Data;
             }
             if (____CombatDataSource.TryGetValue("evoidhigh_13b", out CombatData evoidhigh13bData)) {
@@ -917,6 +1771,9 @@ namespace AtOEndless
                 endgameData.CinematicEndAdventure = false;
                 ____Cinematics["endgame"] = endgameData;
             }
+
+
+            GameManager.Instance.DebugShow();
         }
         public static Dictionary<Enums.Zone, List<string>> RemoveRequirementsByZone = new()
         {
@@ -949,7 +1806,7 @@ namespace AtOEndless
                 return;
             if(___destinationNode != null && ___currentEvent.EventId == "e_endless_obelisk") {
                 AtOManager.Instance.SetTownTier(AtOManager.Instance.GetActNumberForText());
-                AtOManager.Instance.SetGameId($"{AtOManager.Instance.GetGameId().Split("+", StringSplitOptions.RemoveEmptyEntries).First()}+{AtOManager.Instance.GetActNumberForText()}");
+                AtOManager.Instance.SetGameId($"{AtOManager.Instance.GetGameId().Split('+').First()}+{AtOManager.Instance.GetActNumberForText()}");
                 AtOManager.Instance.gameNodeAssigned.Clear();
                 AtOManager.Instance.RemoveItemList(true);
 
@@ -961,6 +1818,26 @@ namespace AtOEndless
                 if(AddRequirementsByZone.TryGetValue(AtOManager.Instance.GetMapZone(___destinationNode.NodeId), out List<string> requirementsToAdd)) {
                     foreach(string requirementToAdd in requirementsToAdd) {
                         AtOManager.Instance.AddPlayerRequirement(Globals.Instance.GetRequirementData(requirementToAdd));
+                    }
+                }
+                // BLESSING AFTER EVERY ZONE
+                if(AtOManager.Instance.PlayerHasRequirement(Globals.Instance.GetRequirementData("endless_allow_blessings"))) {
+                    AtOManager.Instance.AddPlayerRequirement(Globals.Instance.GetRequirementData("endless_pick_blessing"));
+                }
+                // BLESSING AFTER EVERY 4TH ZONE
+                if(AtOManager.Instance.PlayerHasRequirement(Globals.Instance.GetRequirementData("endless_allow_blessings_after_4"))) {
+                    if(AtOManager.Instance.GetActNumberForText() % 4 == 0) {
+                        AtOManager.Instance.AddPlayerRequirement(Globals.Instance.GetRequirementData("endless_pick_blessing"));
+                    } else {
+                        AtOManager.Instance.RemovePlayerRequirement(Globals.Instance.GetRequirementData("endless_pick_blessing"));
+                    }
+                }
+                // BLESSING AFTER VOID ZONES
+                if(AtOManager.Instance.PlayerHasRequirement(Globals.Instance.GetRequirementData("endless_allow_blessings_after_void"))) {
+                    if(AtOManager.Instance.GetMapZone(___destinationNode.NodeId) == Enums.Zone.VoidLow) {
+                        AtOManager.Instance.AddPlayerRequirement(Globals.Instance.GetRequirementData("endless_pick_blessing"));
+                    } else {
+                        AtOManager.Instance.RemovePlayerRequirement(Globals.Instance.GetRequirementData("endless_pick_blessing"));
                     }
                 }
             }
@@ -1036,26 +1913,47 @@ namespace AtOEndless
                 return;
             if (!___isHero) {
                 if (id == "doom" || id == "paralyze" || id == "invulnerable" || id == "stress" || id == "fatigue")
-                    __result = 0;
+                    return;
 
                 int townTier = AtOManager.Instance.GetActNumberForText() - 1;
                 if(townTier >= 4) {
-                    __result = Mathf.FloorToInt(__result * (1 + (.25f * (townTier - 3))));
+                    __result = Mathf.FloorToInt(__result + (1 + (.50f * (townTier - 3))));
                 }
             }
         }
         
         [HarmonyPostfix]
-        [HarmonyPatch(typeof(Character), nameof(Character.DamageWithCharacterBonus))]
-        public static void DamageWithCharacterBonus(ref Character __instance, ref int __result, int value, Enums.DamageType DT, Enums.CardClass CC,
-            int energyCost, int additionalDamage, ref bool ___isHero)
+        [HarmonyPatch(typeof(Character), nameof(Character.DamageBonus))]
+        public static void DamageBonus(ref Character __instance, ref float[] __result,
+        Enums.DamageType DT, int energyCost, ref bool ___isHero)
         {
             if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
                 return;
             if (!___isHero) {
                 int townTier = AtOManager.Instance.GetActNumberForText() - 1;
                 if(townTier >= 4) {
-                    __result = Functions.FuncRoundToInt(__result * (1 + (.25f * (townTier - 3))));
+                    __result = [
+                        __result[0] + (2 * (townTier - 3)),
+                        __result[1] + (15f * (townTier - 3)),
+                    ];
+                }
+            }
+        }
+        
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), nameof(Character.HealBonus))]
+        public static void HealBonus(ref Character __instance, ref float[] __result,
+        int energyCost, ref bool ___isHero)
+        {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+            if (!___isHero) {
+                int townTier = AtOManager.Instance.GetActNumberForText() - 1;
+                if(townTier >= 4) {
+                    __result = [
+                        __result[0] + (2 * (townTier - 3)),
+                        __result[1] + (15f * (townTier - 3)),
+                    ];
                 }
             }
         }
@@ -1068,8 +1966,6 @@ namespace AtOEndless
             if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
                 return;
             ___townTier = AtOManager.Instance.GetActNumberForText() - 1;
-
-            testData = AtOManager.Instance.GetGameId();
         }
 
 
@@ -1199,8 +2095,16 @@ namespace AtOEndless
                     currentCombatData = AtOManager.Instance.GetCurrentCombatData();
                 }
 
-                if(AtOManager.Instance.PlayerHasRequirement(Globals.Instance.GetRequirementData("e_endless_allow_perks")) && currentCombatData.EventData != Globals.Instance.GetEventData("e_endless_perk"))
-                    currentCombatData.EventData = Globals.Instance.GetEventData("e_endless_perk");
+                if(AtOManager.Instance.PlayerHasRequirement(Globals.Instance.GetRequirementData("endless_allow_perks"))) {
+                    if(currentCombatData.EventData != Globals.Instance.GetEventData("e_endless_perk")) {
+                        currentCombatData.EventData = Globals.Instance.GetEventData("e_endless_perk");
+                    }
+                } else if(AtOManager.Instance.PlayerHasRequirement(Globals.Instance.GetRequirementData("endless_allow_blessings")) &&
+                AtOManager.Instance.PlayerHasRequirement(Globals.Instance.GetRequirementData("endless_pick_blessing"))) {
+                        if(currentCombatData.EventData != Globals.Instance.GetEventData("e_endless_blessing")) {
+                            currentCombatData.EventData = Globals.Instance.GetEventData("e_endless_blessing");
+                        }
+                }
                 __result = true;
                 return;
             }
@@ -1268,5 +2172,584 @@ namespace AtOEndless
 
 
         
+
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(Character), "AuraCurseImmunitiesByItemsList")]
+        public static void AuraCurseImmunitiesByItemsListPre(ref Character __instance) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+        }
+        
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), "AuraCurseImmunitiesByItemsList")]
+        public static void AuraCurseImmunitiesByItemsListPost(ref Character __instance, ref List<string> __result, ref bool ___isHero, ref string ___subclassName) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            foreach(string blessing in activeBlessings) {
+                CardData blessingCard = Globals.Instance.GetCardData(blessing);
+                if(blessingCard != null && blessingCard.Item != null) {
+                    if (blessingCard.Item.AuracurseImmune1 != null && !__result.Contains(blessingCard.Item.AuracurseImmune1.Id))
+                        __result.Add(blessingCard.Item.AuracurseImmune1.Id);
+                    if (blessingCard.Item.AuracurseImmune2 != null && !__result.Contains(blessingCard.Item.AuracurseImmune2.Id))
+                        __result.Add(blessingCard.Item.AuracurseImmune2.Id);
+                }
+            }
+            if (___isHero && __result.Contains("bleed") && AtOManager.Instance.CharacterHavePerk(___subclassName, "mainperkfury1c"))
+                __result.Remove("bleed");
+        }
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(Character), "AuraCurseImmuneByItems")]
+        public static void AuraCurseImmuneByItemsPre(ref Character __instance, string acName, out bool __state, ref bool ___useCache, ref Dictionary<string, bool> ___cacheAuraCurseImmuneByItems) {
+            __state = false;
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if((bool) MatchManager.Instance && ___useCache && ___cacheAuraCurseImmuneByItems.ContainsKey(acName))
+                __state = true;
+        }
+        
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), "AuraCurseImmuneByItems")]
+        public static void AuraCurseImmuneByItemsPost(ref Character __instance, string acName, bool __state, ref bool __result, ref bool ___useCache, ref Dictionary<string, bool> ___cacheAuraCurseImmuneByItems, ref HeroData ___heroData, ref string ___subclassName) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+            if(__state)
+                return;
+            if(__result == false && acName == "bleed" && AtOManager.Instance.CharacterHavePerk(___subclassName, "mainperkfury1c"))
+                return;
+            
+            if(___heroData != null) {
+                foreach(string blessing in activeBlessings) {
+                    CardData blessingCard = Globals.Instance.GetCardData(blessing);
+                    if(blessingCard != null && blessingCard.Item != null) {
+                        if (blessingCard.Item.AuracurseImmune1 != null && blessingCard.Item.AuracurseImmune1.Id == acName) {
+                            if(___cacheAuraCurseImmuneByItems.ContainsKey(acName))
+                                ___cacheAuraCurseImmuneByItems[acName] = true;
+                            else
+                                ___cacheAuraCurseImmuneByItems.Add(acName, true);
+                            __result = true;
+                            return;
+                        }
+                        if (blessingCard.Item.AuracurseImmune2 != null && blessingCard.Item.AuracurseImmune2.Id == acName) {
+                            if(___cacheAuraCurseImmuneByItems.ContainsKey(acName))
+                                ___cacheAuraCurseImmuneByItems[acName] = true;
+                            else
+                                ___cacheAuraCurseImmuneByItems.Add(acName, true);
+                            __result = true;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), "GetItemsMaxHPModifier")]
+        public static void GetItemsMaxHPModifierPost(ref Character __instance, ref int __result, ref HeroData ___heroData, ref string ___subclassName) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if(___heroData != null) {
+                foreach(string blessing in activeBlessings) {
+                    CardData blessingCard = Globals.Instance.GetCardData(blessing);
+                    if(blessingCard != null && blessingCard.Item != null && blessingCard.Item.MaxHealth != 0) {
+                        __result += blessingCard.Item.MaxHealth;
+                    }
+                }
+            }
+        }
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(Character), "GetItemHealFlatBonus")]
+        public static void GetItemHealFlatBonusPre(ref Character __instance, out bool __state, ref bool ___useCache, ref List<int> ___cacheGetItemHealFlatBonus) {
+            __state = false;
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if((bool) MatchManager.Instance && ___useCache && ___cacheGetItemHealFlatBonus.Count > 0)
+                __state = true;
+        }
+        
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), "GetItemHealFlatBonus")]
+        public static void GetItemHealFlatBonusPost(ref Character __instance, bool __state, ref int __result, ref bool ___useCache, ref List<int> ___cacheGetItemHealFlatBonus, ref HeroData ___heroData, ref string ___subclassName) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+            if(__state)
+                return;
+            
+            if(___heroData != null) {
+                bool modified = false;
+                foreach(string blessing in activeBlessings) {
+                    CardData blessingCard = Globals.Instance.GetCardData(blessing);
+                    if(blessingCard != null && blessingCard.Item != null && blessingCard.Item.HealFlatBonus != 0) {
+                        __result += blessingCard.Item.HealFlatBonus;
+                            modified = true;
+                    }
+                }
+                if((bool) MatchManager.Instance && ___useCache && ___cacheGetItemHealFlatBonus.Count > 0 && modified)
+                    ___cacheGetItemHealFlatBonus[0] = __result;
+            }
+        }
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(Character), "GetItemHealPercentBonus")]
+        public static void GetItemHealPercentBonusPre(ref Character __instance, out bool __state, ref bool ___useCache, ref List<float> ___cacheGetItemHealPercentBonus) {
+            __state = false;
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if((bool) MatchManager.Instance && ___useCache && ___cacheGetItemHealPercentBonus.Count > 0)
+                __state = true;
+        }
+        
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), "GetItemHealPercentBonus")]
+        public static void GetItemHealPercentBonusPost(ref Character __instance, bool __state, ref float __result, ref bool ___useCache, ref List<float> ___cacheGetItemHealPercentBonus, ref HeroData ___heroData, ref string ___subclassName) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+            if(__state)
+                return;
+            
+            if(___heroData != null) {
+                bool modified = false;
+                foreach(string blessing in activeBlessings) {
+                    CardData blessingCard = Globals.Instance.GetCardData(blessing);
+                    if(blessingCard != null && blessingCard.Item != null && (double) blessingCard.Item.HealPercentBonus != 0.0) {
+                        __result += blessingCard.Item.HealPercentBonus;
+                            modified = true;
+                    }
+                }
+                if((bool) MatchManager.Instance && ___useCache && ___cacheGetItemHealPercentBonus.Count > 0 && modified)
+                    ___cacheGetItemHealPercentBonus[0] = __result;
+            }
+        }
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(Character), "GetItemHealReceivedFlatBonus")]
+        public static void GetItemHealReceivedFlatBonusPre(ref Character __instance, out bool __state, ref bool ___useCache, ref List<int> ___cacheGetItemHealReceivedFlatBonus) {
+            __state = false;
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if((bool) MatchManager.Instance && ___useCache && ___cacheGetItemHealReceivedFlatBonus.Count > 0)
+                __state = true;
+        }
+        
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), "GetItemHealReceivedFlatBonus")]
+        public static void GetItemHealReceivedFlatBonusPost(ref Character __instance, bool __state, ref int __result, ref bool ___useCache, ref List<int> ___cacheGetItemHealReceivedFlatBonus, ref HeroData ___heroData, ref string ___subclassName) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+            if(__state)
+                return;
+            
+            if(___heroData != null) {
+                bool modified = false;
+                foreach(string blessing in activeBlessings) {
+                    CardData blessingCard = Globals.Instance.GetCardData(blessing);
+                    if(blessingCard != null && blessingCard.Item != null && blessingCard.Item.HealReceivedFlatBonus != 0) {
+                        __result += blessingCard.Item.HealReceivedFlatBonus;
+                            modified = true;
+                    }
+                }
+                if((bool) MatchManager.Instance && ___useCache && ___cacheGetItemHealReceivedFlatBonus.Count > 0 && modified)
+                    ___cacheGetItemHealReceivedFlatBonus[0] = __result;
+            }
+        }
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(Character), "GetItemHealReceivedPercentBonus")]
+        public static void GetItemHealReceivedPercentBonusPre(ref Character __instance, out bool __state, ref bool ___useCache, ref List<float> ___cacheGetItemHealReceivedPercentBonus) {
+            __state = false;
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if((bool) MatchManager.Instance && ___useCache && ___cacheGetItemHealReceivedPercentBonus.Count > 0)
+                __state = true;
+        }
+        
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), "GetItemHealReceivedPercentBonus")]
+        public static void GetItemHealReceivedPercentBonusPost(ref Character __instance, bool __state, ref float __result, ref bool ___useCache, ref List<float> ___cacheGetItemHealReceivedPercentBonus, ref HeroData ___heroData, ref string ___subclassName) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+            if(__state)
+                return;
+            
+            if(___heroData != null) {
+                bool modified = false;
+                foreach(string blessing in activeBlessings) {
+                    CardData blessingCard = Globals.Instance.GetCardData(blessing);
+                    if(blessingCard != null && blessingCard.Item != null && (double) blessingCard.Item.HealReceivedPercentBonus != 0.0) {
+                        __result += blessingCard.Item.HealReceivedPercentBonus;
+                        modified = true;
+                    }
+                }
+                if((bool) MatchManager.Instance && ___useCache && ___cacheGetItemHealReceivedPercentBonus.Count > 0 && modified)
+                    ___cacheGetItemHealReceivedPercentBonus[0] = __result;
+            }
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), "GetItemHealPercentDictionary")]
+        public static void GetItemHealPercentDictionaryPost(ref Character __instance, ref Dictionary<string, int> __result, ref HeroData ___heroData) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if(___heroData != null) {
+                foreach(string blessing in activeBlessings) {
+                    CardData blessingCard = Globals.Instance.GetCardData(blessing);
+                    if(blessingCard != null && blessingCard.Item != null && (double) blessingCard.Item.HealPercentBonus != 0.0) {
+                        StringBuilder stringBuilder = new StringBuilder();
+                        stringBuilder.Append(blessingCard.CardName);
+                        stringBuilder.Append("_card");
+                        __result.Add(stringBuilder.ToString(), (int) blessingCard.Item.HealPercentBonus);
+                    }
+                }
+            }
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), "GetItemHealFlatDictionary")]
+        public static void GetItemHealFlatDictionaryPost(ref Character __instance, ref Dictionary<string, int> __result, ref HeroData ___heroData) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if(___heroData != null) {
+                foreach(string blessing in activeBlessings) {
+                    CardData blessingCard = Globals.Instance.GetCardData(blessing);
+                    if(blessingCard != null && blessingCard.Item != null && (double) blessingCard.Item.HealFlatBonus != 0.0) {
+                        StringBuilder stringBuilder = new StringBuilder();
+                        stringBuilder.Append(blessingCard.CardName);
+                        stringBuilder.Append("_card");
+                        __result.Add(stringBuilder.ToString(), blessingCard.Item.HealFlatBonus);
+                    }
+                }
+            }
+        }
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(Character), "GetItemAuraCurseModifiers")]
+        public static void GetItemAuraCurseModifiersPre(ref Character __instance, out bool __state, ref bool ___useCache, ref Dictionary<string, int> ___cacheGetItemAuraCurseModifiers) {
+            __state = false;
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if((bool) MatchManager.Instance && ___useCache && ___cacheGetItemAuraCurseModifiers.Count > 0)
+                __state = true;
+        }
+        
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), "GetItemAuraCurseModifiers")]
+        public static void GetItemAuraCurseModifiersPost(ref Character __instance, bool __state, ref Dictionary<string, int> __result, ref bool ___useCache, ref Dictionary<string, int> ___cacheGetItemAuraCurseModifiers, ref HeroData ___heroData, ref string ___subclassName) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+            if(__state)
+                return;
+            
+            if(___heroData != null) {
+                bool modified = false;
+                foreach(string blessing in activeBlessings) {
+                    CardData blessingCard = Globals.Instance.GetCardData(blessing);
+                    if(blessingCard != null && blessingCard.Item != null) {
+                        if(blessingCard.Item.AuracurseBonus1 != null) {
+                            if (__result.ContainsKey(blessingCard.Item.AuracurseBonus1.Id))
+                                __result[blessingCard.Item.AuracurseBonus1.Id] += blessingCard.Item.AuracurseBonusValue1;
+                            else
+                                __result[blessingCard.Item.AuracurseBonus1.Id] = blessingCard.Item.AuracurseBonusValue1;
+
+                            modified = true;
+                        }
+                        if(blessingCard.Item.AuracurseBonus2 != null) {
+                            if (__result.ContainsKey(blessingCard.Item.AuracurseBonus2.Id))
+                                __result[blessingCard.Item.AuracurseBonus2.Id] += blessingCard.Item.AuracurseBonusValue2;
+                            else
+                                __result[blessingCard.Item.AuracurseBonus2.Id] = blessingCard.Item.AuracurseBonusValue2;
+
+                            modified = true;
+                        }
+                    }
+                }
+                if((bool) MatchManager.Instance && ___useCache && ___cacheGetItemAuraCurseModifiers.Count > 0 && modified)
+                    ___cacheGetItemAuraCurseModifiers = __result;
+            }
+        }
+
+        
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(Character), "GetItemDamageFlatModifiers")]
+        public static void GetItemDamageFlatModifiersPre(ref Character __instance, Enums.DamageType DamageType, out bool __state, ref bool ___useCache, ref Dictionary<Enums.DamageType, int> ___cacheGetItemDamageFlatModifiers) {
+            __state = false;
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if((bool) MatchManager.Instance && ___useCache && ___cacheGetItemDamageFlatModifiers.ContainsKey(DamageType))
+                __state = true;
+        }
+        
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), "GetItemDamageFlatModifiers")]
+        public static void GetItemDamageFlatModifiersPost(ref Character __instance, Enums.DamageType DamageType, bool __state, ref int __result, ref bool ___useCache, ref Dictionary<Enums.DamageType, int> ___cacheGetItemDamageFlatModifiers, ref HeroData ___heroData) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+            if(__state)
+                return;
+            
+            if(___heroData != null) {
+                bool modified = false;
+                foreach(string blessing in activeBlessings) {
+                    CardData blessingCard = Globals.Instance.GetCardData(blessing);
+                    if(blessingCard != null && blessingCard.Item != null) {
+                        if(blessingCard.Item.DamageFlatBonus == DamageType || blessingCard.Item.DamageFlatBonus == Enums.DamageType.All) {
+                            __result += blessingCard.Item.DamageFlatBonusValue;
+                            modified = true;
+                        }
+                        if(blessingCard.Item.DamageFlatBonus2 == DamageType || blessingCard.Item.DamageFlatBonus2 == Enums.DamageType.All) {
+                            __result += blessingCard.Item.DamageFlatBonusValue2;
+                            modified = true;
+                        }
+                        if(blessingCard.Item.DamageFlatBonus3 == DamageType || blessingCard.Item.DamageFlatBonus3 == Enums.DamageType.All) {
+                            __result += blessingCard.Item.DamageFlatBonusValue3;
+                            modified = true;
+                        }
+                        modified = true;
+                    }
+                }
+                if((bool) MatchManager.Instance && ___useCache && ___cacheGetItemDamageFlatModifiers.ContainsKey(DamageType) && modified)
+                    ___cacheGetItemDamageFlatModifiers[DamageType] = __result;
+            }
+        }
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(Character), "GetItemDamagePercentModifiers")]
+        public static void GetItemDamagePercentModifiersPre(ref Character __instance, Enums.DamageType DamageType, out bool __state, ref bool ___useCache, ref Dictionary<Enums.DamageType, float> ___cacheGetItemDamagePercentModifiers) {
+            __state = false;
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if((bool) MatchManager.Instance && ___useCache && ___cacheGetItemDamagePercentModifiers.ContainsKey(DamageType))
+                __state = true;
+        }
+        
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), "GetItemDamagePercentModifiers")]
+        public static void GetItemDamagePercentModifiersPost(ref Character __instance, Enums.DamageType DamageType, bool __state, ref float __result, ref bool ___useCache, ref Dictionary<Enums.DamageType, float> ___cacheGetItemDamagePercentModifiers, ref HeroData ___heroData) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+            if(__state)
+                return;
+            
+            if(___heroData != null) {
+                bool modified = false;
+                foreach(string blessing in activeBlessings) {
+                    CardData blessingCard = Globals.Instance.GetCardData(blessing);
+                    if(blessingCard != null && blessingCard.Item != null) {
+                        if(blessingCard.Item.DamagePercentBonus == DamageType || blessingCard.Item.DamagePercentBonus == Enums.DamageType.All) {
+                            __result += blessingCard.Item.DamagePercentBonusValue;
+                            modified = true;
+                        }
+                        if(blessingCard.Item.DamagePercentBonus2 == DamageType || blessingCard.Item.DamagePercentBonus2 == Enums.DamageType.All) {
+                            __result += blessingCard.Item.DamagePercentBonusValue2;
+                            modified = true;
+                        }
+                        if(blessingCard.Item.DamagePercentBonus3 == DamageType || blessingCard.Item.DamagePercentBonus3 == Enums.DamageType.All) {
+                            __result += blessingCard.Item.DamagePercentBonusValue3;
+                            modified = true;
+                        }
+                        modified = true;
+                    }
+                }
+                if((bool) MatchManager.Instance && ___useCache && ___cacheGetItemDamagePercentModifiers.ContainsKey(DamageType) && modified)
+                    ___cacheGetItemDamagePercentModifiers[DamageType] = __result;
+            }
+        }
+
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), "GetItemDamageDonePercentDictionary")]
+        public static void GetItemDamageDonePercentDictionaryPost(ref Character __instance, Enums.DamageType DamageType, ref Dictionary<string, int> __result, ref HeroData ___heroData) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if(___heroData != null) {
+                foreach(string blessing in activeBlessings) {
+                    CardData blessingCard = Globals.Instance.GetCardData(blessing);
+                    float num = 0.0f;
+                    if(blessingCard != null && blessingCard.Item != null) {
+                        if(blessingCard.Item.DamagePercentBonus == DamageType || blessingCard.Item.DamagePercentBonus == Enums.DamageType.All) {
+                            num += blessingCard.Item.DamagePercentBonusValue;
+                        }
+                        if(blessingCard.Item.DamagePercentBonus2 == DamageType || blessingCard.Item.DamagePercentBonus2 == Enums.DamageType.All) {
+                            num += blessingCard.Item.DamagePercentBonusValue2;
+                        }
+                        if(blessingCard.Item.DamagePercentBonus3 == DamageType || blessingCard.Item.DamagePercentBonus3 == Enums.DamageType.All) {
+                            num += blessingCard.Item.DamagePercentBonusValue3;
+                        }
+                        if((double) num != 0.0) {
+                            StringBuilder stringBuilder = new StringBuilder();
+                            stringBuilder.Append(blessingCard.CardName);
+                            stringBuilder.Append("_card");
+                            __result.Add(stringBuilder.ToString(), (int) num);
+                        }
+                    }
+                }
+            }
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), "GetItemDamageDoneDictionary")]
+        public static void GetItemDamageDoneDictionaryPost(ref Character __instance, Enums.DamageType DamageType, ref Dictionary<string, int> __result, ref HeroData ___heroData) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if(___heroData != null) {
+                foreach(string blessing in activeBlessings) {
+                    CardData blessingCard = Globals.Instance.GetCardData(blessing);
+                    int num = 0;
+                    if(blessingCard != null && blessingCard.Item != null) {
+                        if(blessingCard.Item.DamageFlatBonus == DamageType || blessingCard.Item.DamageFlatBonus == Enums.DamageType.All) {
+                            num += blessingCard.Item.DamageFlatBonusValue;
+                        }
+                        if(blessingCard.Item.DamageFlatBonus2 == DamageType || blessingCard.Item.DamageFlatBonus2 == Enums.DamageType.All) {
+                            num += blessingCard.Item.DamageFlatBonusValue2;
+                        }
+                        if(blessingCard.Item.DamageFlatBonus3 == DamageType || blessingCard.Item.DamageFlatBonus3 == Enums.DamageType.All) {
+                            num += blessingCard.Item.DamageFlatBonusValue3;
+                        }
+                        if(num != 0) {
+                            StringBuilder stringBuilder = new StringBuilder();
+                            stringBuilder.Append(blessingCard.CardName);
+                            stringBuilder.Append("_card");
+                            __result.Add(stringBuilder.ToString(), num);
+                        }
+                    }
+                }
+            }
+        }
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(Character), "GetItemResistModifiers")]
+        public static void GetItemResistModifiersPre(ref Character __instance, Enums.DamageType type, out bool __state, ref bool ___useCache, ref Dictionary<Enums.DamageType, int> ___cacheGetItemResistModifiers) {
+            __state = false;
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if((bool) MatchManager.Instance && ___useCache && ___cacheGetItemResistModifiers.ContainsKey(type))
+                __state = true;
+        }
+        
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), "GetItemResistModifiers")]
+        public static void GetItemResistModifiersPost(ref Character __instance, Enums.DamageType type, bool __state, ref int __result, ref bool ___useCache, ref Dictionary<Enums.DamageType, int> ___cacheGetItemResistModifiers, ref HeroData ___heroData) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+            if(__state)
+                return;
+            
+            if(___heroData != null) {
+                bool modified = false;
+                foreach(string blessing in activeBlessings) {
+                    CardData blessingCard = Globals.Instance.GetCardData(blessing);
+                    if(blessingCard != null && blessingCard.Item != null) {
+                        if(blessingCard.Item.ResistModified1 == type || blessingCard.Item.ResistModified1 == Enums.DamageType.All) {
+                            __result += blessingCard.Item.ResistModifiedValue1;
+                            modified = true;
+                        }
+                        if(blessingCard.Item.ResistModified2 == type || blessingCard.Item.ResistModified2 == Enums.DamageType.All) {
+                            __result += blessingCard.Item.ResistModifiedValue2;
+                            modified = true;
+                        }
+                        if(blessingCard.Item.ResistModified3 == type || blessingCard.Item.ResistModified3 == Enums.DamageType.All) {
+                            __result += blessingCard.Item.ResistModifiedValue3;
+                            modified = true;
+                        }
+                        modified = true;
+                    }
+                }
+                if((bool) MatchManager.Instance && ___useCache && ___cacheGetItemResistModifiers.ContainsKey(type) && modified)
+                    ___cacheGetItemResistModifiers[type] = __result;
+            }
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), "GetItemResistModifiersDictionary")]
+        public static void GetItemResistModifiersDictionaryPost(ref Character __instance, Enums.DamageType type, ref Dictionary<string, int> __result, ref HeroData ___heroData) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if(___heroData != null) {
+                foreach(string blessing in activeBlessings) {
+                    CardData blessingCard = Globals.Instance.GetCardData(blessing);
+                    int num = 0;
+                    if(blessingCard != null && blessingCard.Item != null) {
+                        if(blessingCard.Item.ResistModified1 == type || blessingCard.Item.ResistModified1 == Enums.DamageType.All) {
+                            num += blessingCard.Item.ResistModifiedValue1;
+                        }
+                        if(blessingCard.Item.ResistModified2 == type || blessingCard.Item.ResistModified2 == Enums.DamageType.All) {
+                            num += blessingCard.Item.ResistModifiedValue2;
+                        }
+                        if(blessingCard.Item.ResistModified3 == type || blessingCard.Item.ResistModified3 == Enums.DamageType.All) {
+                            num += blessingCard.Item.ResistModifiedValue3;
+                        }
+                        if(num != 0) {
+                            StringBuilder stringBuilder = new StringBuilder();
+                            stringBuilder.Append(blessingCard.CardName);
+                            stringBuilder.Append("_card");
+                            __result.Add(stringBuilder.ToString(), num);
+                        }
+                    }
+                }
+            }
+        }
+
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(Character), "GetItemStatModifiers")]
+        public static void GetItemStatModifiersPre(ref Character __instance, Enums.CharacterStat stat, out bool __state, ref bool ___useCache, ref Dictionary<Enums.CharacterStat, int> ___cacheGetItemStatModifiers) {
+            __state = false;
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+
+            if((bool) MatchManager.Instance && ___useCache && ___cacheGetItemStatModifiers.ContainsKey(stat))
+                __state = true;
+        }
+        
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(Character), "GetItemStatModifiers")]
+        public static void GetItemStatModifiersPost(ref Character __instance, Enums.CharacterStat stat, bool __state, ref int __result, ref bool ___useCache, ref Dictionary<Enums.CharacterStat, int> ___cacheGetItemStatModifiers, ref HeroData ___heroData) {
+            if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
+                return;
+            if(__state)
+                return;
+            
+            if(___heroData != null) {
+                bool modified = false;
+                foreach(string blessing in activeBlessings) {
+                    CardData blessingCard = Globals.Instance.GetCardData(blessing);
+                    if(blessingCard != null && blessingCard.Item != null) {
+                        if(blessingCard.Item.CharacterStatModified == stat) {
+                            __result += blessingCard.Item.CharacterStatModifiedValue;
+                            modified = true;
+                        }
+                        if(blessingCard.Item.CharacterStatModified2 == stat) {
+                            __result += blessingCard.Item.CharacterStatModifiedValue2;
+                            modified = true;
+                        }
+                        if(blessingCard.Item.CharacterStatModified3 == stat) {
+                            __result += blessingCard.Item.CharacterStatModifiedValue3;
+                            modified = true;
+                        }
+                        modified = true;
+                    }
+                }
+                if((bool) MatchManager.Instance && ___useCache && ___cacheGetItemStatModifiers.ContainsKey(stat) && modified)
+                    ___cacheGetItemStatModifiers[stat] = __result;
+            }
+        }
     }
 }
