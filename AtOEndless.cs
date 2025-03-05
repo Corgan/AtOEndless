@@ -71,38 +71,41 @@ namespace AtOEndless
 
             LogInfo($"Blessing Cards: {stringList.Count}");
 
-            int randomCorruptionIndex = UnityEngine.Random.Range(0, stringList.Count);
-            string corruptionIdCard = stringList[randomCorruptionIndex];
-            LogInfo($"Random Corruption Index: {randomCorruptionIndex} - {corruptionIdCard}");
+            if(stringList.Count > 0) {
+                int randomCorruptionIndex = UnityEngine.Random.Range(0, stringList.Count);
+                string corruptionIdCard = stringList[randomCorruptionIndex];
+                LogInfo($"Random Corruption Index: {randomCorruptionIndex} - {corruptionIdCard}");
 
-            CardData cDataCorruption = Globals.Instance.GetCardData(corruptionIdCard, false);
-            
-            if(AtOManager.Instance.GetTownTier() == 0) {
-                cDataCorruption = Functions.GetCardDataFromCardData(cDataCorruption, "");
-                if (cDataCorruption != null)
-                    corruptionIdCard = cDataCorruption.Id;
-            }
-            if(AtOManager.Instance.GetTownTier() >= 1) {
-                cDataCorruption = Functions.GetCardDataFromCardData(cDataCorruption, "A");
-                if (cDataCorruption != null)
-                    corruptionIdCard = cDataCorruption.Id;
-            }
-            if(AtOManager.Instance.GetTownTier() >= 2) {
-                cDataCorruption = Functions.GetCardDataFromCardData(cDataCorruption, "B");
-                if (cDataCorruption != null)
-                    corruptionIdCard = cDataCorruption.Id;
-            }
-            if(AtOManager.Instance.GetTownTier() >= 3) {
-                cDataCorruption = Functions.GetCardDataFromCardData(cDataCorruption, "RARE");
-                if (cDataCorruption != null)
-                    corruptionIdCard = cDataCorruption.Id;
-            }
+                CardData cDataCorruption = Globals.Instance.GetCardData(corruptionIdCard, false);
+                
+                if(AtOManager.Instance.GetTownTier() == 0) {
+                    cDataCorruption = Functions.GetCardDataFromCardData(cDataCorruption, "");
+                    if (cDataCorruption != null)
+                        corruptionIdCard = cDataCorruption.Id;
+                }
+                if(AtOManager.Instance.GetTownTier() >= 1) {
+                    cDataCorruption = Functions.GetCardDataFromCardData(cDataCorruption, "A");
+                    if (cDataCorruption != null)
+                        corruptionIdCard = cDataCorruption.Id;
+                }
+                if(AtOManager.Instance.GetTownTier() >= 2) {
+                    cDataCorruption = Functions.GetCardDataFromCardData(cDataCorruption, "B");
+                    if (cDataCorruption != null)
+                        corruptionIdCard = cDataCorruption.Id;
+                }
+                if(AtOManager.Instance.GetTownTier() >= 3) {
+                    cDataCorruption = Functions.GetCardDataFromCardData(cDataCorruption, "RARE");
+                    if (cDataCorruption != null)
+                        corruptionIdCard = cDataCorruption.Id;
+                }
 
-            if(cDataCorruption == null)
-                cDataCorruption = Globals.Instance.GetCardData(corruptionIdCard, false);
+                if(cDataCorruption == null)
+                    cDataCorruption = Globals.Instance.GetCardData(corruptionIdCard, false);
 
-            LogInfo($"Got Corruption Card: {cDataCorruption.Id}");
-            return cDataCorruption;
+                LogInfo($"Got Corruption Card: {cDataCorruption.Id}");
+                return cDataCorruption;
+            }
+            return null;
         }
 
         public static void BeginMatchBlessings() {
@@ -144,25 +147,27 @@ namespace AtOEndless
                 if(cardData.Item != null && cardData.Item.Activation == blessingBeginRound) {
                     Hero[] teamHero = Traverse.Create(MatchManager.Instance).Field("TeamHero").GetValue<Hero[]>();
                     NPC[] teamNPC = Traverse.Create(MatchManager.Instance).Field("TeamNPC").GetValue<NPC[]>();
+                    LogInfo($"{blessing} - BEGIN ROUND - {cardData.Item.ItemTarget}");
                     if(cardData.Item.ItemTarget == Enums.ItemTarget.AllHero) {
                         for(int index = 0; index < 4; ++index) {
                             if(teamHero[index] != null && teamHero[index].Alive) {
-                                teamHero[index].DoItem(blessingBeginRound, cardData, cardData.Item.Id, null, 0, "", 0, null);
+                                teamHero[index].SetEvent(blessingBeginRound);
                                 break;
                             }
                         }
                     } else if(cardData.Item.ItemTarget == Enums.ItemTarget.RandomHero || cardData.Item.ItemTarget == Enums.ItemTarget.Self) {
                         if(cardData.Item.ItemTarget == Enums.ItemTarget.Self) {
                             for (int index = 0; index < 4; ++index) {
-                                if(teamHero[index] != null && teamHero[index].Alive)
-                                    teamHero[index].DoItem(blessingBeginRound, cardData, cardData.Item.Id, teamHero[index], 0, "", 0, null);
+                                if(teamHero[index] != null && teamHero[index].Alive){
+                                    teamHero[index].SetEvent(blessingBeginRound);
+                                }
                             }
                         } else {
                             bool flag4 = false;
                             while (!flag4) {
                                 int randomIntRange = MatchManager.Instance.GetRandomIntRange(0, 4);
                                 if(teamHero[randomIntRange] != null && teamHero[randomIntRange].Alive) {
-                                    teamHero[randomIntRange].DoItem(blessingBeginRound, cardData, cardData.Item.Id, teamHero[randomIntRange], 0, "", 0, null);
+                                    teamHero[randomIntRange].SetEvent(blessingBeginRound);
                                     flag4 = true;
                                 }
                             }
@@ -170,22 +175,23 @@ namespace AtOEndless
                     } else if (cardData.Item.ItemTarget == Enums.ItemTarget.AllEnemy) {
                         for(int index = 0; index < 4; ++index) {
                             if(teamNPC[index] != null && teamNPC[index].Alive) {
-                                teamNPC[index].DoItem(blessingBeginRound, cardData, cardData.Item.Id, null, 0, "", 0, null);
+                                teamNPC[index].SetEvent(blessingBeginRound);
                                 break;
                             }
                         }
                     } else if (cardData.Item.ItemTarget == Enums.ItemTarget.RandomEnemy || cardData.Item.ItemTarget == Enums.ItemTarget.SelfEnemy) {
                         if(cardData.Item.ItemTarget == Enums.ItemTarget.SelfEnemy) {
                             for (int index = 0; index < 4; ++index) {
-                                if(teamNPC[index] != null && teamNPC[index].Alive)
-                                    teamHero[index].DoItem(blessingBeginRound, cardData, cardData.Item.Id, teamHero[index], 0, "", 0, null);
+                                if(teamNPC[index] != null && teamNPC[index].Alive) {
+                                    teamNPC[index].SetEvent(blessingBeginRound);
+                                }
                             }
                         } else {
                             bool flag5 = false;
                             while (!flag5) {
                                 int randomIntRange = MatchManager.Instance.GetRandomIntRange(0, 4);
                                 if(teamNPC[randomIntRange] != null && teamNPC[randomIntRange].Alive) {
-                                    teamNPC[randomIntRange].DoItem(blessingBeginRound, cardData, cardData.Item.Id, teamNPC[randomIntRange], 0, "", 0, null);
+                                    teamNPC[randomIntRange].SetEvent(blessingBeginRound);
                                     flag5 = true;
                                 }
                             }
@@ -340,6 +346,31 @@ namespace AtOEndless
                 } else {
                     blessingIcon.transform.gameObject.SetActive(false);
                 }
+            }
+        }
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(CardData), nameof(CardData.SetDescriptionNew))]
+        public static void SetDescriptionNewPre(ref CardData __instance, bool forceDescription, Character character, bool includeInSearch, out Enums.EventActivation __state) {
+            __state = Enums.EventActivation.None;
+            if(__instance.CardType == blessingCardType && __instance.Item != null) {
+                if(__instance.Item.Activation == blessingBeginRound) {
+                    __state = __instance.Item.Activation;
+                    __instance.Item.Activation = Enums.EventActivation.BeginRound;
+                }
+                if(__instance.Item.Activation == blessingCombatStart) {
+                    __state = __instance.Item.Activation;
+                    __instance.Item.Activation = Enums.EventActivation.BeginCombat;
+                }
+            }
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(CardData), nameof(CardData.SetDescriptionNew))]
+        public static void SetDescriptionNewPost(ref CardData __instance, bool forceDescription, Character character, bool includeInSearch, Enums.EventActivation __state) {
+            if(__instance.CardType == blessingCardType && __instance.Item != null) {
+                if(__state != Enums.EventActivation.None)
+                    __instance.Item.Activation = __state;
             }
         }
         
@@ -1219,8 +1250,8 @@ namespace AtOEndless
                 if(newCardItem.CardPlace == Enums.CardPlace.Hand && newCardItem.CardNum > 0 && (newCardItem.Activation == Enums.EventActivation.BeginRound || newCardItem.Activation == Enums.EventActivation.CorruptionBeginRound))
                     newCardItem.Activation = Enums.EventActivation.BeginTurnCardsDealt;
 
-                //if(newCardItem.CardNum == 0 && newCardItem.Activation == Enums.EventActivation.CorruptionBeginRound)
-                //    newCardItem.Activation = blessingBeginRound;
+                if(newCardItem.CardNum == 0 && newCardItem.Activation == Enums.EventActivation.CorruptionBeginRound)
+                    newCardItem.Activation = blessingBeginRound;
 
                 if(newCardItem.CardNum == 0 && newCardItem.Activation == Enums.EventActivation.CorruptionCombatStart)
                     newCardItem.Activation = blessingCombatStart;
@@ -1342,30 +1373,6 @@ namespace AtOEndless
         ];
 
         [HarmonyPostfix]
-        [HarmonyPatch(typeof(Globals), nameof(Globals.CreateCardClones))]
-        public static void CreateCardClones(ref Globals __instance,
-        ref Dictionary<string, CardData> ____CardsSource,
-        ref Dictionary<string, CardData> ____Cards,
-        ref Dictionary<Enums.CardType, List<string>> ____CardItemByType,
-        ref Dictionary<Enums.CardType, List<string>> ____CardListByType,
-        ref Dictionary<Enums.CardClass, List<string>> ____CardListByClass,
-        ref List<string> ____CardListNotUpgraded,
-        ref Dictionary<Enums.CardClass, List<string>> ____CardListNotUpgradedByClass,
-        ref Dictionary<string, List<string>> ____CardListByClassType,
-        ref Dictionary<string, int> ____CardEnergyCost
-        ) {
-            if (GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
-                return;
-
-            foreach(string cardId in blessingCards) {
-                CardData blessing = CloneBlessingCard(cardId, true, ref ____CardsSource, ref ____Cards, ref ____CardItemByType, ref ____CardListByType, ref ____CardListByClass, ref ____CardListNotUpgraded, ref ____CardListNotUpgradedByClass, ref ____CardListByClassType, ref ____CardEnergyCost);
-                availableBlessings.Add(blessing.Id);
-            }
-
-            GameManager.Instance.cardSprites = GameManager.Instance.cardSprites.Concat(GameManager.Instance.cardSprites.Where(c => c.name == "card-bg-special")).ToArray();
-        }
-
-        [HarmonyPostfix]
         [HarmonyPatch(typeof(Globals), nameof(Globals.GetExperienceByLevel))]
         public static void GetExperienceByLevel(ref Globals __instance, int level, ref int __result) {
             if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
@@ -1447,10 +1454,25 @@ namespace AtOEndless
         ref Dictionary<string, CombatData> ____CombatDataSource,
         ref Dictionary<string, CinematicData> ____Cinematics,
         ref Dictionary<string, EventRequirementData> ____Requirements,
-        ref Dictionary<int, int> ____ExperienceByLevel
+        ref Dictionary<string, CardData> ____CardsSource,
+        ref Dictionary<string, CardData> ____Cards,
+        ref Dictionary<Enums.CardType, List<string>> ____CardItemByType,
+        ref Dictionary<Enums.CardType, List<string>> ____CardListByType,
+        ref Dictionary<Enums.CardClass, List<string>> ____CardListByClass,
+        ref List<string> ____CardListNotUpgraded,
+        ref Dictionary<Enums.CardClass, List<string>> ____CardListNotUpgradedByClass,
+        ref Dictionary<string, List<string>> ____CardListByClassType,
+        ref Dictionary<string, int> ____CardEnergyCost
         ) {
             if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
                 return;
+
+            foreach(string cardId in blessingCards) {
+                CardData blessing = CloneBlessingCard(cardId, true, ref ____CardsSource, ref ____Cards, ref ____CardItemByType, ref ____CardListByType, ref ____CardListByClass, ref ____CardListNotUpgraded, ref ____CardListNotUpgradedByClass, ref ____CardListByClassType, ref ____CardEnergyCost);
+                availableBlessings.Add(blessing.Id);
+            }
+
+            GameManager.Instance.cardSprites = GameManager.Instance.cardSprites.Concat(GameManager.Instance.cardSprites.Where(c => c.name == "card-bg-special")).ToArray();
 
             AddNewRequirement("endless_complete_sen", ref ____Requirements);
             AddNewRequirement("endless_complete_faen", ref ____Requirements);
@@ -1467,7 +1489,8 @@ namespace AtOEndless
             AddNewRequirement("endless_allow_perks", ref ____Requirements);
 
             AddNewRequirement("endless_allow_blessings", ref ____Requirements);
-            AddNewRequirement("endless_allow_blessings_after_4", ref ____Requirements);
+            AddNewRequirement("endless_allow_blessings_starting_4", ref ____Requirements);
+            AddNewRequirement("endless_allow_blessings_every_4", ref ____Requirements);
             AddNewRequirement("endless_allow_blessings_after_void", ref ____Requirements);
             AddNewRequirement("endless_pick_blessing", ref ____Requirements);
 
@@ -1507,7 +1530,8 @@ namespace AtOEndless
 
 
                 EventReplyData configReplyAllowBlessings = configReplyPrefab.ShallowCopy();
-                EventReplyData configReplyAllowBlessingsAfter4 = configReplyPrefab.ShallowCopy();
+                EventReplyData configReplyAllowBlessingsStarting4 = configReplyPrefab.ShallowCopy();
+                EventReplyData configReplyAllowBlessingsEvery4 = configReplyPrefab.ShallowCopy();
                 EventReplyData configReplyAllowBlessingsAfterVoid = configReplyPrefab.ShallowCopy();
                 EventReplyData configReplyAllowBlessingsNo = configReplyPrefab.ShallowCopy();
 
@@ -1518,11 +1542,17 @@ namespace AtOEndless
                 configReplyAllowBlessings.SsRequirementUnlock2 = Globals.Instance.GetRequirementData("endless_pick_blessing");
                 configReplyAllowBlessings.SsEvent = eventDataAllowAdditionalLevels;
 
-                configReplyAllowBlessingsAfter4.ReplyActionText = Enums.EventAction.None;
-                configReplyAllowBlessingsAfter4.ReplyText = "After every Act starting at 4";
-                configReplyAllowBlessingsAfter4.SsRewardText = "";
-                configReplyAllowBlessingsAfter4.SsRequirementUnlock = Globals.Instance.GetRequirementData("endless_allow_blessings_after_4");
-                configReplyAllowBlessingsAfter4.SsEvent = eventDataAllowAdditionalLevels;
+                configReplyAllowBlessingsStarting4.ReplyActionText = Enums.EventAction.None;
+                configReplyAllowBlessingsStarting4.ReplyText = "After every Act starting at Act 4";
+                configReplyAllowBlessingsStarting4.SsRewardText = "";
+                configReplyAllowBlessingsStarting4.SsRequirementUnlock = Globals.Instance.GetRequirementData("endless_allow_blessings_starting_4");
+                configReplyAllowBlessingsStarting4.SsEvent = eventDataAllowAdditionalLevels;
+
+                configReplyAllowBlessingsEvery4.ReplyActionText = Enums.EventAction.None;
+                configReplyAllowBlessingsEvery4.ReplyText = "After every 4th Act";
+                configReplyAllowBlessingsEvery4.SsRewardText = "";
+                configReplyAllowBlessingsEvery4.SsRequirementUnlock = Globals.Instance.GetRequirementData("endless_allow_blessings_every_4");
+                configReplyAllowBlessingsEvery4.SsEvent = eventDataAllowAdditionalLevels;
 
                 configReplyAllowBlessingsAfterVoid.ReplyActionText = Enums.EventAction.None;
                 configReplyAllowBlessingsAfterVoid.ReplyText = "After every Void Act";
@@ -1646,7 +1676,7 @@ namespace AtOEndless
                 eventDataAllowBlessings.Description = "Allow Blessings";
                 eventDataAllowBlessings.DescriptionAction = "Allow randomized blessings at the end of acts?";
                 eventDataAllowBlessings.EventId = "e_endless_allow_blessings";
-                eventDataAllowBlessings.Replys = [configReplyAllowBlessings, configReplyAllowBlessingsAfter4, configReplyAllowBlessingsAfterVoid, configReplyAllowBlessingsNo];
+                eventDataAllowBlessings.Replys = [configReplyAllowBlessings, configReplyAllowBlessingsStarting4, configReplyAllowBlessingsEvery4, configReplyAllowBlessingsAfterVoid, configReplyAllowBlessingsNo];
                 eventDataAllowBlessings.Init();
                 ____Events.Add(eventDataAllowBlessings.EventId.ToLower(), eventDataAllowBlessings);
 
@@ -1824,8 +1854,16 @@ namespace AtOEndless
                 if(AtOManager.Instance.PlayerHasRequirement(Globals.Instance.GetRequirementData("endless_allow_blessings"))) {
                     AtOManager.Instance.AddPlayerRequirement(Globals.Instance.GetRequirementData("endless_pick_blessing"));
                 }
+                // BLESSING AFTER EVERY ZONE STARTING AT 4
+                if(AtOManager.Instance.PlayerHasRequirement(Globals.Instance.GetRequirementData("endless_allow_blessings_starting_4"))) {
+                    if(AtOManager.Instance.GetActNumberForText() > 3) {
+                        AtOManager.Instance.AddPlayerRequirement(Globals.Instance.GetRequirementData("endless_pick_blessing"));
+                    } else {
+                        AtOManager.Instance.RemovePlayerRequirement(Globals.Instance.GetRequirementData("endless_pick_blessing"));
+                    }
+                }
                 // BLESSING AFTER EVERY 4TH ZONE
-                if(AtOManager.Instance.PlayerHasRequirement(Globals.Instance.GetRequirementData("endless_allow_blessings_after_4"))) {
+                if(AtOManager.Instance.PlayerHasRequirement(Globals.Instance.GetRequirementData("endless_allow_blessings_every_4"))) {
                     if(AtOManager.Instance.GetActNumberForText() % 4 == 0) {
                         AtOManager.Instance.AddPlayerRequirement(Globals.Instance.GetRequirementData("endless_pick_blessing"));
                     } else {
