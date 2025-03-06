@@ -151,7 +151,7 @@ namespace AtOEndless
                     if(cardData.Item.ItemTarget == Enums.ItemTarget.AllHero) {
                         for(int index = 0; index < 4; ++index) {
                             if(teamHero[index] != null && teamHero[index].Alive) {
-                                teamHero[index].SetEvent(blessingBeginRound);
+                                    teamHero[index].DoItem(blessingBeginRound, cardData, cardData.Item.Id, null, 0, "", 0, null);
                                 break;
                             }
                         }
@@ -159,7 +159,7 @@ namespace AtOEndless
                         if(cardData.Item.ItemTarget == Enums.ItemTarget.Self) {
                             for (int index = 0; index < 4; ++index) {
                                 if(teamHero[index] != null && teamHero[index].Alive){
-                                    teamHero[index].SetEvent(blessingBeginRound);
+                                    teamHero[index].DoItem(blessingBeginRound, cardData, cardData.Item.Id, null, 0, "", 0, null);
                                 }
                             }
                         } else {
@@ -167,7 +167,7 @@ namespace AtOEndless
                             while (!flag4) {
                                 int randomIntRange = MatchManager.Instance.GetRandomIntRange(0, 4);
                                 if(teamHero[randomIntRange] != null && teamHero[randomIntRange].Alive) {
-                                    teamHero[randomIntRange].SetEvent(blessingBeginRound);
+                                    teamHero[randomIntRange].DoItem(blessingBeginRound, cardData, cardData.Item.Id, null, 0, "", 0, null);
                                     flag4 = true;
                                 }
                             }
@@ -175,7 +175,7 @@ namespace AtOEndless
                     } else if (cardData.Item.ItemTarget == Enums.ItemTarget.AllEnemy) {
                         for(int index = 0; index < 4; ++index) {
                             if(teamNPC[index] != null && teamNPC[index].Alive) {
-                                teamNPC[index].SetEvent(blessingBeginRound);
+                                teamNPC[index].DoItem(blessingBeginRound, cardData, cardData.Item.Id, null, 0, "", 0, null);
                                 break;
                             }
                         }
@@ -183,7 +183,7 @@ namespace AtOEndless
                         if(cardData.Item.ItemTarget == Enums.ItemTarget.SelfEnemy) {
                             for (int index = 0; index < 4; ++index) {
                                 if(teamNPC[index] != null && teamNPC[index].Alive) {
-                                    teamNPC[index].SetEvent(blessingBeginRound);
+                                    teamNPC[index].DoItem(blessingBeginRound, cardData, cardData.Item.Id, null, 0, "", 0, null);
                                 }
                             }
                         } else {
@@ -191,7 +191,7 @@ namespace AtOEndless
                             while (!flag5) {
                                 int randomIntRange = MatchManager.Instance.GetRandomIntRange(0, 4);
                                 if(teamNPC[randomIntRange] != null && teamNPC[randomIntRange].Alive) {
-                                    teamNPC[randomIntRange].SetEvent(blessingBeginRound);
+                                    teamNPC[randomIntRange].DoItem(blessingBeginRound, cardData, cardData.Item.Id, null, 0, "", 0, null);
                                     flag5 = true;
                                 }
                             }
@@ -2221,21 +2221,23 @@ namespace AtOEndless
         
         [HarmonyPostfix]
         [HarmonyPatch(typeof(Character), "AuraCurseImmunitiesByItemsList")]
-        public static void AuraCurseImmunitiesByItemsListPost(ref Character __instance, ref List<string> __result, ref bool ___isHero, ref string ___subclassName) {
+        public static void AuraCurseImmunitiesByItemsListPost(ref Character __instance, ref List<string> __result, ref HeroData ___heroData, ref string ___subclassName) {
             if(GameManager.Instance.IsObeliskChallenge() || GameManager.Instance.IsWeeklyChallenge())
                 return;
 
-            foreach(string blessing in activeBlessings) {
-                CardData blessingCard = Globals.Instance.GetCardData(blessing);
-                if(blessingCard != null && blessingCard.Item != null) {
-                    if (blessingCard.Item.AuracurseImmune1 != null && !__result.Contains(blessingCard.Item.AuracurseImmune1.Id))
-                        __result.Add(blessingCard.Item.AuracurseImmune1.Id);
-                    if (blessingCard.Item.AuracurseImmune2 != null && !__result.Contains(blessingCard.Item.AuracurseImmune2.Id))
-                        __result.Add(blessingCard.Item.AuracurseImmune2.Id);
+            if(___heroData != null) {
+                foreach(string blessing in activeBlessings) {
+                    CardData blessingCard = Globals.Instance.GetCardData(blessing);
+                    if(blessingCard != null && blessingCard.Item != null) {
+                        if (blessingCard.Item.AuracurseImmune1 != null && !__result.Contains(blessingCard.Item.AuracurseImmune1.Id))
+                            __result.Add(blessingCard.Item.AuracurseImmune1.Id);
+                        if (blessingCard.Item.AuracurseImmune2 != null && !__result.Contains(blessingCard.Item.AuracurseImmune2.Id))
+                            __result.Add(blessingCard.Item.AuracurseImmune2.Id);
+                    }
                 }
+                if(__result.Contains("bleed") && AtOManager.Instance.CharacterHavePerk(___subclassName, "mainperkfury1c"))
+                    __result.Remove("bleed");
             }
-            if (___isHero && __result.Contains("bleed") && AtOManager.Instance.CharacterHavePerk(___subclassName, "mainperkfury1c"))
-                __result.Remove("bleed");
         }
 
         [HarmonyPrefix]
