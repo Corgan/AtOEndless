@@ -1,5 +1,6 @@
 using HarmonyLib;
 using HarmonyLib.Tools;
+using Photon.Pun;
 using System;
 using static AtOEndless.Plugin;
 using System.Collections.Generic;
@@ -24,9 +25,10 @@ namespace AtOEndless
 {
     [Serializable]
     public class AtOEndlessSaveData {
-        private HashSet<string> activeBlessings = [];
+        public HashSet<string> activeBlessings = [];
 
-        public void FillData() {
+        public void FillData()
+        {
             LogInfo($"SET ACTIVE BLESSINGS: {string.Join(", ", AtOEndless.activeBlessings)}");
             activeBlessings = AtOEndless.activeBlessings;
         }
@@ -34,6 +36,51 @@ namespace AtOEndless
         public void LoadData() {
             AtOEndless.activeBlessings = activeBlessings;
             LogInfo($"GET ACTIVE BLESSINGS: {string.Join(", ", activeBlessings)}");
+        }
+    }
+
+    public class AtOEndlessSaveManager : MonoBehaviourPunCallbacks
+    {
+        private new PhotonView photonView;
+        public AtOEndlessSaveData endlessData = new AtOEndlessSaveData();
+
+        public void CreateView()
+        {
+            photonView = PhotonView.Get(this);
+        }
+
+        public void SendData()
+        {
+            LogInfo($"SEND ACTIVE BLESSINGS: {string.Join(", ", endlessData.activeBlessings)}");
+            photonView.RPC("SendDataCo", RpcTarget.All, Functions.CompressString(JsonHelper.ToJson<string>(endlessData.activeBlessings.ToArray())));
+        }
+
+        [PunRPC]
+        public void SendDataCo(string activeBlessings)
+        {
+            endlessData.activeBlessings = JsonHelper.FromJson<string>(Functions.DecompressString(activeBlessings)).ToHashSet<string>();
+            LogInfo($"SENDCO ACTIVE BLESSINGS: {string.Join(", ", endlessData.activeBlessings)}");
+        }
+
+        public void FillData(BinaryFormatter binaryFormatter, CryptoStream cryptoStream)
+        {
+            endlessData.FillData();
+            binaryFormatter.Serialize(cryptoStream, endlessData);
+            if (GameManager.Instance.IsMultiplayer() && NetworkManager.Instance.IsMaster()) {
+                LogInfo("SEND DATA FILL");
+                SendData();
+            }
+        }
+        
+        public void LoadData(CryptoStream cryptoStream)
+        {
+            BinaryFormatter binaryFormatter = new BinaryFormatter();
+            endlessData = (AtOEndlessSaveData) binaryFormatter.Deserialize(cryptoStream);
+            endlessData.LoadData();
+            if(GameManager.Instance.IsMultiplayer() && NetworkManager.Instance.IsMaster()) {
+                LogInfo("SEND DATA LOAD");
+                SendData();
+            }
         }
     }
 
@@ -46,23 +93,31 @@ namespace AtOEndless
         public static Enums.EventActivation blessingCombatStart = Enum.GetValues(typeof(Enums.EventActivation)).Cast<Enums.EventActivation>().Max() + 1;
         public static Enums.EventActivation blessingBeginRound = Enum.GetValues(typeof(Enums.EventActivation)).Cast<Enums.EventActivation>().Max() + 2;
 
-        public static CardData GetRandomBlessing(List<string> ignore = null) {
-            List<string> stringList = [..availableBlessings];
+        public static AtOEndlessSaveManager EndlessSaveManager;
 
-            foreach(string activeBlessing in activeBlessings) {
+        public static CardData GetRandomBlessing(List<string> ignore = null)
+        {
+            List<string> stringList = [.. availableBlessings];
+
+            foreach (string activeBlessing in activeBlessings)
+            {
                 CardData cDataBlessing = Globals.Instance.GetCardData(activeBlessing, false);
                 cDataBlessing = Functions.GetCardDataFromCardData(cDataBlessing, "");
-                if(cDataBlessing != null && stringList.Contains(cDataBlessing.Id)) {
+                if (cDataBlessing != null && stringList.Contains(cDataBlessing.Id))
+                {
                     LogInfo($"Active Blessing: {cDataBlessing.Id}");
                     stringList.Remove(cDataBlessing.Id);
                 }
             }
 
-            if(ignore != null) {
-                foreach(string ignoreBlessing in ignore) {
+            if (ignore != null)
+            {
+                foreach (string ignoreBlessing in ignore)
+                {
                     CardData cDataBlessing = Globals.Instance.GetCardData(ignoreBlessing, false);
                     cDataBlessing = Functions.GetCardDataFromCardData(cDataBlessing, "");
-                    if(cDataBlessing != null && stringList.Contains(cDataBlessing.Id)) {
+                    if (cDataBlessing != null && stringList.Contains(cDataBlessing.Id))
+                    {
                         LogInfo($"Ignore Blessing: {cDataBlessing.Id}");
                         stringList.Remove(cDataBlessing.Id);
                     }
@@ -71,35 +126,40 @@ namespace AtOEndless
 
             LogInfo($"Blessing Cards: {stringList.Count}");
 
-            if(stringList.Count > 0) {
+            if (stringList.Count > 0)
+            {
                 int randomCorruptionIndex = UnityEngine.Random.Range(0, stringList.Count);
                 string corruptionIdCard = stringList[randomCorruptionIndex];
                 LogInfo($"Random Corruption Index: {randomCorruptionIndex} - {corruptionIdCard}");
 
                 CardData cDataCorruption = Globals.Instance.GetCardData(corruptionIdCard, false);
-                
-                if(AtOManager.Instance.GetTownTier() == 0) {
+
+                if (AtOManager.Instance.GetTownTier() == 0)
+                {
                     cDataCorruption = Functions.GetCardDataFromCardData(cDataCorruption, "");
                     if (cDataCorruption != null)
                         corruptionIdCard = cDataCorruption.Id;
                 }
-                if(AtOManager.Instance.GetTownTier() >= 1) {
+                if (AtOManager.Instance.GetTownTier() >= 1)
+                {
                     cDataCorruption = Functions.GetCardDataFromCardData(cDataCorruption, "A");
                     if (cDataCorruption != null)
                         corruptionIdCard = cDataCorruption.Id;
                 }
-                if(AtOManager.Instance.GetTownTier() >= 2) {
+                if (AtOManager.Instance.GetTownTier() >= 2)
+                {
                     cDataCorruption = Functions.GetCardDataFromCardData(cDataCorruption, "B");
                     if (cDataCorruption != null)
                         corruptionIdCard = cDataCorruption.Id;
                 }
-                if(AtOManager.Instance.GetTownTier() >= 3) {
+                if (AtOManager.Instance.GetTownTier() >= 3)
+                {
                     cDataCorruption = Functions.GetCardDataFromCardData(cDataCorruption, "RARE");
                     if (cDataCorruption != null)
                         corruptionIdCard = cDataCorruption.Id;
                 }
 
-                if(cDataCorruption == null)
+                if (cDataCorruption == null)
                     cDataCorruption = Globals.Instance.GetCardData(corruptionIdCard, false);
 
                 LogInfo($"Got Corruption Card: {cDataCorruption.Id}");
@@ -400,20 +460,21 @@ namespace AtOEndless
             if(backUp && File.Exists(str))
                 File.Copy(str, destFileName, true);
             DESCryptoServiceProvider cryptoServiceProvider = new DESCryptoServiceProvider();
-            try {
+            try
+            {
                 FileStream fileStream = new FileStream(str, FileMode.Create, FileAccess.Write);
                 using (CryptoStream cryptoStream = new CryptoStream(fileStream, cryptoServiceProvider.CreateEncryptor(key, iv), CryptoStreamMode.Write))
                 {
                     BinaryFormatter binaryFormatter = new BinaryFormatter();
-                    AtOEndlessSaveData endlessData = new AtOEndlessSaveData();
-                    endlessData.FillData();
-                    CryptoStream serializationStream = cryptoStream;
-                    binaryFormatter.Serialize(serializationStream, endlessData);
+                    EndlessSaveManager.FillData(binaryFormatter, cryptoStream);
                     cryptoStream.Close();
                 }
                 fileStream.Close();
-            } catch {
+            }
+            catch (Exception ex)
+            {
                 LogInfo($"Failed to save AtOEndless Data");
+                LogInfo($"Reason: {ex.Message} {ex.StackTrace}");
             }
         }
         
@@ -442,9 +503,10 @@ namespace AtOEndless
                     fileStream.Close();
                 } else {
                     DESCryptoServiceProvider cryptoServiceProvider = new DESCryptoServiceProvider();
-                    try {
+                    try
+                    {
                         CryptoStream serializationStream = new CryptoStream(fileStream, cryptoServiceProvider.CreateDecryptor(key, iv), CryptoStreamMode.Read);
-                        (new BinaryFormatter().Deserialize(serializationStream) as AtOEndlessSaveData).LoadData();
+                        EndlessSaveManager.LoadData(serializationStream);
                         serializationStream.Close();
                     }
                     catch (SerializationException ex) {
@@ -454,6 +516,28 @@ namespace AtOEndless
                 }
             }
         }
+
+
+
+        //FOR TESTING PURPOSES ONLY, ALLOWS CREATING A GAME WITH 1 PLAYER
+
+/*
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(NetworkManager), nameof(NetworkManager.CreateRoom))]
+        public static void DeleteGame(NetworkManager __instance, ref string roomName, ref string roomPlayers, ref string roomPassword, ref string lfm)
+        {
+            roomPlayers = "1";
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(LobbyManager), nameof(LobbyManager.SetLobbyPlayersData))]
+        public static void SetLobbyPlayersData(LobbyManager __instance)
+        {
+            __instance.buttonLaunch.gameObject.SetActive(true);
+        }
+*/
+        
+        
         
         [HarmonyPostfix]
         [HarmonyPatch(typeof(SaveManager), nameof(SaveManager.DeleteGame))]
@@ -644,15 +728,24 @@ namespace AtOEndless
             }
         }
 
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(NetworkManager), "Awake")]
+        public static void NetworkManagerAwake(ref NetworkManager __instance) {
+            EndlessSaveManager = NetworkManager.Instance.gameObject.AddComponent<AtOEndlessSaveManager>();
+            EndlessSaveManager.CreateView();
+        }
+
         public static string[] GetEnabledPerks() {
             List<string> acquiredPerks = [];
-            foreach(List<string> sub in AtOManager.Instance.heroPerks.Values) {
-                foreach(string perk in sub) {
-                    if(perk.StartsWith("endless_") && !acquiredPerks.Contains(perk))
+            foreach (List<string> sub in AtOManager.Instance.heroPerks.Values)
+            {
+                foreach (string perk in sub)
+                {
+                    if (perk.StartsWith("endless_") && !acquiredPerks.Contains(perk))
                         acquiredPerks.Add(perk);
                 }
             }
-            return [..acquiredPerks];
+            return [.. acquiredPerks];
         }
 
         public static string GetRandomPerkDescription(PerkData perkData) {
@@ -736,8 +829,7 @@ namespace AtOEndless
         
         [HarmonyPrefix]
         [HarmonyPatch(typeof(EventManager), nameof(EventManager.SetEvent))]
-        public static void SetEvent(ref EventManager __instance, EventData _eventData)
-        {
+        public static void SetEvent(ref EventManager __instance, EventData _eventData) {
             if(_eventData.EventId == "e_endless_perk") {
                 EventReplyData perkReplyPrefab = Globals.Instance.GetEventData("e_challenge_next").Replys.First<EventReplyData>();
                 int deterministicHashCode = AtOManager.Instance.GetGameId().GetDeterministicHashCode();
@@ -958,10 +1050,6 @@ namespace AtOEndless
                 }
 
                 Globals.Instance.GetEventData("e_endless_obelisk").Replys = [..replies];
-
-                //int townTier = AtOManager.Instance.GetActNumberForText() - 1;
-                //if(townTier >= 4)
-                //    AddRandomBlessing();
             }
         }
 
@@ -1314,17 +1402,17 @@ namespace AtOEndless
             "armageddon", // YES
             //"ashysky", // SHUFFLE INTO DECK
             //"backlash", // NEED DESCRIPTION
-            "bloodpuddle", // YES
+            //"bloodpuddle", // YES
             //"bomblottery",
             //"burningweapons", // MAKE IT WORK
-            "chaospuddle", // YES
+            //"chaospuddle", // YES
             "chaoticwind", // YES
             //"christmastree", // NEED DESCRIPTION
             "coldfront", // YES
-            "colorfulpuddle", // YES
-            "darkpuddle", // YES
+            //"colorfulpuddle", // YES
+            //"darkpuddle", // YES
             "deathgrip", // YES
-            "electricpuddle", //YES
+            //"electricpuddle", //YES
             "empower", // YES
             "firecrackers", // YES
             //"forestallies", // NEED DESCRIPTION
@@ -1333,18 +1421,18 @@ namespace AtOEndless
             //"heavyweaponry", // MAKE IT WORK
             "hexproof", // YES
             //"holynight", // FIX
-            "holypuddle", // YES
+            //"holypuddle", // YES
             //"hypotermia", // "YOU" PLAY A CARD
-            "icypuddle", // YES
+            //"icypuddle", // YES
             "ironclad", // YES
             "lanternfestival", // YES
             "lavabursts", // YES
-            "lavapuddle", // YES
+            //"lavapuddle", // YES
             "livingforest", // YES
-            "lonelyblob", // YES
+            //"lonelyblob", // YES
             //"meatfeast", // NEED DESCRIPTION
             //"melancholy",
-            "metalpuddle", // YES
+            //"metalpuddle", // YES
             //"mysticnight", // FIX
             //"noxiousparasites",
             //"pacifism",
@@ -1364,11 +1452,11 @@ namespace AtOEndless
             //"threedragons", // NEED DESCRIPTION
             //"threeghost", // NEED DESCRIPTION AND DOESNT WORK
             "thunderstorm", // YES
-            "toxicpuddle", // YES
+            //"toxicpuddle", // YES
             //"trickortreat", // NEED DESCRIPTION
             "upwind", // YES
             "vigorous", // YES
-            "waterpuddle", // YES
+            //"waterpuddle", // YES
             //"windsofamnesia"
         ];
 
@@ -1471,6 +1559,8 @@ namespace AtOEndless
                 CardData blessing = CloneBlessingCard(cardId, true, ref ____CardsSource, ref ____Cards, ref ____CardItemByType, ref ____CardListByType, ref ____CardListByClass, ref ____CardListNotUpgraded, ref ____CardListNotUpgradedByClass, ref ____CardListByClassType, ref ____CardEnergyCost);
                 availableBlessings.Add(blessing.Id);
             }
+
+            //AddNewBlessings(ref ____CardsSource, ref ____Cards, ref ____CardItemByType, ref ____CardListByType, ref ____CardListByClass, ref ____CardListNotUpgraded, ref ____CardListNotUpgradedByClass, ref ____CardListByClassType, ref ____CardEnergyCost);
 
             GameManager.Instance.cardSprites = GameManager.Instance.cardSprites.Concat(GameManager.Instance.cardSprites.Where(c => c.name == "card-bg-special")).ToArray();
 
@@ -1805,6 +1895,8 @@ namespace AtOEndless
 
             GameManager.Instance.DebugShow();
         }
+
+
         public static Dictionary<Enums.Zone, List<string>> RemoveRequirementsByZone = new()
         {
             { Enums.Zone.Senenthia, ["treasurehuntii"] },
@@ -2790,6 +2882,376 @@ namespace AtOEndless
                 if((bool) MatchManager.Instance && ___useCache && ___cacheGetItemStatModifiers.ContainsKey(stat) && modified)
                     ___cacheGetItemStatModifiers[stat] = __result;
             }
+        }
+
+        private static void AddNewBlessings() {
+            Dictionary<string, CardData> ____CardsSource = Traverse.Create(Globals.Instance).Field<Dictionary<string, CardData>>("_CardsSource").Value;
+            Dictionary<string, CardData> ____Cards = Traverse.Create(Globals.Instance).Field<Dictionary<string, CardData>>("_Cards").Value;
+            Dictionary<Enums.CardType, List<string>> ____CardItemByType = Traverse.Create(Globals.Instance).Field<Dictionary<Enums.CardType, List<string>>>("_CardItemByType").Value;
+            Dictionary<Enums.CardType, List<string>> ____CardListByType = Traverse.Create(Globals.Instance).Field<Dictionary<Enums.CardType, List<string>>>("_CardListByType").Value;
+            Dictionary<Enums.CardClass, List<string>> ____CardListByClass = Traverse.Create(Globals.Instance).Field<Dictionary<Enums.CardClass, List<string>>>("_CardListByClass").Value;
+            List<string> ____CardListNotUpgraded = Traverse.Create(Globals.Instance).Field<List<string>>("_CardListNotUpgraded").Value;
+            Dictionary<Enums.CardClass, List<string>> ____CardListNotUpgradedByClass = Traverse.Create(Globals.Instance).Field<Dictionary<Enums.CardClass, List<string>>>("_CardListNotUpgradedByClass").Value;
+            Dictionary<string, List<string>> ____CardListByClassType = Traverse.Create(Globals.Instance).Field<Dictionary<string, List<string>>>("_CardListByClassType").Value;
+            Dictionary<string, int> ____CardEnergyCost = Traverse.Create(Globals.Instance).Field<Dictionary<string, int>>("_CardEnergyCost").Value;
+            
+            CardData armageddon = GenerateBlessingCard("endlessarmageddon");
+            armageddon.Item.Activation = blessingBeginRound;
+            armageddon.Item.CardNum = 1;
+            armageddon.Item.CardPlace = Enums.CardPlace.Cast;
+                        
+            ____CardsSource.Add(armageddon.Id.ToLower(), armageddon);
+            ____Cards.Add(armageddon.Id.ToLower(), armageddon);
+        }
+
+        public static CardData GenerateBlessingCard(string blessingId) {
+            return UnityEngine.Object.Instantiate(new CardData()
+            {
+                CardName = "",
+                Id = blessingId,
+                InternalId = "",
+                Visible = true,
+                UpgradesTo1 = "",
+                UpgradesTo2 = "",
+                CardUpgraded = Enums.CardUpgraded.No,
+                UpgradedFrom = "",
+                BaseCard = "",
+                CardNumber = 0,
+                Description = "",
+                Fluff = "",
+                DescriptionNormalized = "",
+                KeyNotes = [],
+                Sprite = null,
+                Sound = null,
+                SoundPreAction = null,
+                EffectPreAction = "",
+                EffectCaster = "",
+                EffectPostCastDelay = 0.0f,
+                EffectCasterRepeat = false,
+                EffectCastCenter = false,
+                EffectTrail = "",
+                EffectTrailRepeat = false,
+                EffectTrailSpeed = 0.0f,
+                EffectTrailAngle = Enums.EffectTrailAngle.Parabolic,
+                EffectTarget = "",
+                MaxInDeck = 0,
+                CardRarity = Enums.CardRarity.Common,
+                CardType = Enums.CardType.None,
+                CardTypeAux = [],
+                CardClass = Enums.CardClass.None,
+                EnergyCost = 0,
+                EnergyCostOriginal = 0,
+                EnergyCostForShow = 0,
+                Playable = true,
+                AutoplayDraw = false,
+                AutoplayEndTurn = false,
+                TargetType = Enums.CardTargetType.Single,
+                TargetSide = Enums.CardTargetSide.Anyone,
+                TargetPosition = Enums.CardTargetPosition.Anywhere,
+                EffectRequired = "",
+                EffectRepeat = 0,
+                EffectRepeatDelay = 0.0f,
+                EffectRepeatEnergyBonus = 0,
+                EffectRepeatMaxBonus = 0,
+                EffectRepeatTarget = Enums.EffectRepeatTarget.NoRepeat,
+                EffectRepeatModificator = 0,
+                DamageType = Enums.DamageType.None,
+                Damage = 0,
+                DamagePreCalculated = 0,
+                DamageSides = 0,
+                DamageSidesPreCalculated = 0,
+                DamageSelf = 0,
+                DamageSelfPreCalculated = 0,
+                DamageSelfPreCalculated2 = 0,
+                IgnoreBlock = false,
+                DamageType2 = Enums.DamageType.None,
+                Damage2 = 0,
+                DamagePreCalculated2 = 0,
+                DamageSides2 = 0,
+                DamageSidesPreCalculated2 = 0,
+                DamageSelf2 = 0,
+                IgnoreBlock2 = false,
+                SelfHealthLoss = 0,
+                DamageEnergyBonus = 0,
+                Heal = 0,
+                HealSides = 0,
+                HealSelf = 0,
+                HealEnergyBonus = 0,
+                HealSelfPerDamageDonePercent = 0.0f,
+                HealCurses = 0,
+                HealAuraCurseSelf = null,
+                HealAuraCurseName = null,
+                HealAuraCurseName2 = null,
+                HealAuraCurseName3 = null,
+                HealAuraCurseName4 = null,
+                DispelAuras = 0,
+                EnergyRecharge = 0,
+                Aura = null,
+                AuraSelf = null,
+                AuraCharges = 0,
+                Aura2 = null,
+                AuraSelf2 = null,
+                AuraCharges2 = 0,
+                Aura3 = null,
+                AuraSelf3 = null,
+                AuraCharges3 = 0,
+                Curse = null,
+                CurseSelf = null,
+                CurseCharges = 0,
+                Curse2 = null,
+                CurseSelf2 = null,
+                CurseCharges2 = 0,
+                Curse3 = null,
+                CurseSelf3 = null,
+                CurseCharges3 = 0,
+                PushTarget = 0,
+                PullTarget = 0,
+                DrawCard = 0,
+                DiscardCard = 0,
+                DiscardCardType = Enums.CardType.None,
+                DiscardCardTypeAux = [],
+                DiscardCardAutomatic = false,
+                DiscardCardPlace = Enums.CardPlace.Discard,
+                AddCard = 0,
+                AddCardId = "",
+                AddCardType = Enums.CardType.None,
+                AddCardTypeAux = [],
+                AddCardChoose = 0,
+                AddCardFrom = Enums.CardFrom.Game,
+                AddCardPlace = Enums.CardPlace.Discard,
+                AddCardReducedCost = 0,
+                AddCardCostTurn = false,
+                AddCardVanish = false,
+                LookCards = 0,
+                LookCardsDiscardUpTo = 0,
+                SummonUnit = null,
+                SummonUnitNum = 0,
+                Vanish = true,
+                Lazy = false,
+                Innate = false,
+                Corrupted = false,
+                EndTurn = false,
+                MoveToCenter = false,
+                ModifiedByTrait = false,
+                EffectPostTargetDelay = 0.0f,
+                SpecialValueGlobal = Enums.CardSpecialValue.None,
+                SpecialValueModifierGlobal = 0.0f,
+                SpecialValue1 = Enums.CardSpecialValue.None,
+                SpecialValueModifier1 = 0.0f,
+                SpecialValue2 = Enums.CardSpecialValue.None,
+                SpecialValueModifier2 = 0.0f,
+                DamageSpecialValueGlobal = false,
+                DamageSpecialValue1 = false,
+                DamageSpecialValue2 = false,
+                Damage2SpecialValueGlobal = false,
+                Damage2SpecialValue1 = false,
+                Damage2SpecialValue2 = false,
+                SpecialAuraCurseNameGlobal = null,
+                SpecialAuraCurseName1 = null,
+                SpecialAuraCurseName2 = null,
+                AuraChargesSpecialValue1 = false,
+                AuraChargesSpecialValue2 = false,
+                AuraChargesSpecialValueGlobal = false,
+                AuraCharges2SpecialValue1 = false,
+                AuraCharges2SpecialValue2 = false,
+                AuraCharges2SpecialValueGlobal = false,
+                AuraCharges3SpecialValue1 = false,
+                AuraCharges3SpecialValue2 = false,
+                AuraCharges3SpecialValueGlobal = false,
+                CurseChargesSpecialValue1 = false,
+                CurseChargesSpecialValue2 = false,
+                CurseChargesSpecialValueGlobal = false,
+                CurseCharges2SpecialValue1 = false,
+                CurseCharges2SpecialValue2 = false,
+                CurseCharges2SpecialValueGlobal = false,
+                CurseCharges3SpecialValue1 = false,
+                CurseCharges3SpecialValue2 = false,
+                CurseCharges3SpecialValueGlobal = false,
+                HealSpecialValueGlobal = false,
+                HealSpecialValue1 = false,
+                HealSpecialValue2 = false,
+                SelfHealthLossSpecialGlobal = false,
+                SelfHealthLossSpecialValue1 = false,
+                SelfHealthLossSpecialValue2 = false,
+                FluffPercent = 0.0f,
+                Item = GenerateCardItem(blessingId),
+                SummonAura = null,
+                SummonAuraCharges = 0,
+                SummonAura2 = null,
+                SummonAuraCharges2 = 0,
+                SummonAura3 = null,
+                SummonAuraCharges3 = 0,
+                HealSelfSpecialValueGlobal = false,
+                HealSelfSpecialValue1 = false,
+                HealSelfSpecialValue2 = false,
+                PetModel = null,
+                PetFront = false,
+                PetOffset = Vector2.zero,
+                PetSize = Vector2.zero,
+                PetInvert = false,
+                IsPetAttack = false,
+                IsPetCast = false,
+                UpgradesToRare = null,
+                ExhaustCounter = 0,
+                Starter = false,
+                Target = "",
+                ItemEnchantment = null,
+                AddCardList = [],
+                ShowInTome = false,
+                LookCardsVanishUpTo = 0,
+                TransferCurses = 0,
+                KillPet = false,
+                ReduceCurses = 0,
+                AcEnergyBonus = null,
+                AcEnergyBonusQuantity = 0,
+                EnergyReductionPermanent = 0,
+                EnergyReductionTemporal = 0,
+                EnergyReductionToZeroPermanent = false,
+                EnergyReductionToZeroTemporal = false,
+                AcEnergyBonus2 = null,
+                AcEnergyBonus2Quantity = 0,
+                StealAuras = 0,
+                FlipSprite = false,
+                SoundPreActionFemale = null,
+                ReduceAuras = 0,
+                IncreaseCurses = 0,
+                IncreaseAuras = 0,
+                OnlyInWeekly = false,
+                RelatedCard = "",
+                RelatedCard2 = "",
+                RelatedCard3 = "",
+                GoldGainQuantity = 0,
+                ShardsGainQuantity = 0,
+                Sku = "",
+                EnergyRechargeSpecialValueGlobal = false,
+                DrawCardSpecialValueGlobal = false,
+                SelfKillHiddenSeconds = 0.0f,
+                SoundHitReworkDelay = 0.0f,
+                Evolve = false,
+                Metamorph = false
+            });
+        }
+
+        public static ItemData GenerateCardItem(string itemId) {
+            return UnityEngine.Object.Instantiate(new ItemData()
+            {
+                Acg1MultiplyByEnergyUsed = false,
+                Acg2MultiplyByEnergyUsed = false,
+                Acg3MultiplyByEnergyUsed = false,
+                Activation = Enums.EventActivation.None,
+                ActivationOnlyOnHeroes = false,
+                AuracurseBonus1 = null,
+                AuracurseBonus2 = null,
+                AuracurseBonusValue1 = 0,
+                AuracurseBonusValue2 = 0,
+                AuracurseCustomAC = null,
+                AuracurseCustomModValue1 = 0,
+                AuracurseCustomModValue2 = 0,
+                AuracurseCustomString = null,
+                AuracurseGain1 = null,
+                AuracurseGain2 = null,
+                AuracurseGain3 = null,
+                AuracurseGainValue1 = 0,
+                AuracurseGainValue2 = 0,
+                AuracurseGainValue3 = 0,
+                AuracurseGainSelf1 = null,
+                AuracurseGainSelf2 = null,
+                AuracurseGainSelfValue1 = 0,
+                AuracurseGainSelfValue2 = 0,
+                AuracurseImmune1 = null,
+                AuracurseImmune2 = null,
+                AuraCurseNumForOneEvent = 0,
+                AuraCurseSetted = null,
+                CardNum = 0,
+                CardPlace = Enums.CardPlace.Discard,
+                CardsReduced = 0,
+                CardToGain = null,
+                CardToGainList = new List<CardData>(),
+                CardToGainType = Enums.CardType.None,
+                CardToReduceType = Enums.CardType.None,
+                CastedCardType = Enums.CardType.None,
+                CastEnchantmentOnFinishSelfCast = false,
+                ChanceToDispel = 0,
+                ChanceToDispelNum = 0,
+                CharacterStatModified = Enums.CharacterStat.None,
+                CharacterStatModified2 = Enums.CharacterStat.None,
+                CharacterStatModified3 = Enums.CharacterStat.None,
+                CharacterStatModifiedValue = 0,
+                CharacterStatModifiedValue2 = 0,
+                CharacterStatModifiedValue3 = 0,
+                CostReducePermanent = false,
+                CostReduceReduction = 0,
+                CostReduceEnergyRequirement = 0,
+                CostReduction = 0,
+                CostZero = false,
+                CursedItem = false,
+                DamageFlatBonus = Enums.DamageType.None,
+                DamageFlatBonus2 = Enums.DamageType.None,
+                DamageFlatBonus3 = Enums.DamageType.None,
+                DamageFlatBonusValue = 0,
+                DamageFlatBonusValue2 = 0,
+                DamageFlatBonusValue3 = 0,
+                DamagePercentBonus = Enums.DamageType.None,
+                DamagePercentBonus2 = Enums.DamageType.None,
+                DamagePercentBonus3 = Enums.DamageType.None,
+                DamagePercentBonusValue = 0.0f,
+                DamagePercentBonusValue2 = 0.0f,
+                DamagePercentBonusValue3 = 0.0f,
+                DamageToTarget = 0,
+                DamageToTargetType = Enums.DamageType.None,
+                DestroyAfterUse = false,
+                DestroyAfterUses = 0,
+                DestroyEndOfTurn = false,
+                DestroyStartOfTurn = false,
+                DrawCards = 0,
+                DrawMultiplyByEnergyUsed = false,
+                DropOnly = true,
+                DttMultiplyByEnergyUsed = false,
+                DuplicateActive = false,
+                EffectCaster = null,
+                EffectItemOwner = null,
+                EffectTarget = "",
+                EffectCasterDelay = 0.0f,
+                EffectTargetDelay = 0.0f,
+                EmptyHand = false,
+                EnergyQuantity = 0,
+                ExactRound = 0,
+                HealFlatBonus = 0,
+                HealPercentBonus = 0.0f,
+                HealPercentQuantity = 0,
+                HealPercentQuantitySelf = 0,
+                HealQuantity = 0,
+                HealReceivedFlatBonus = 0,
+                HealReceivedPercentBonus = 0.0f,
+                Id = itemId,
+                IsEnchantment = false,
+                ItemSound = null,
+                ItemTarget = Enums.ItemTarget.Self,
+                LowerOrEqualPercentHP = 100.0f,
+                MaxHealth = 0,
+                ModifiedDamageType = Enums.DamageType.None,
+                NotShowCharacterBonus = false,
+                OnlyAddItemToNPCs = false,
+                PassSingleAndCharacterRolls = false,
+                PercentDiscountShop = 0,
+                PercentRetentionEndGame = 0,
+                Permanent = false,
+                QuestItem = false,
+                ReduceHighestCost = false,
+                ResistModified1 = Enums.DamageType.None,
+                ResistModified2 = Enums.DamageType.None,
+                ResistModified3 = Enums.DamageType.None,
+                ResistModifiedValue1 = 0,
+                ResistModifiedValue2 = 0,
+                ResistModifiedValue3 = 0,
+                RoundCycle = 0,
+                SpriteBossDrop = null,
+                TimesPerCombat = 0,
+                TimesPerTurn = 0,
+                UsedEnergy = false,
+                UseTheNextInsteadWhenYouPlay = false,
+                Vanish = true
+            });
         }
     }
 }
