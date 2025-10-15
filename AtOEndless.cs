@@ -14,6 +14,7 @@ using System.Security.Cryptography;
 using System.IO;
 using System.Reflection.Emit;
 using TMPro;
+using System.Drawing;
 
 
 /*
@@ -60,6 +61,7 @@ namespace AtOEndless
         {
             endlessData.activeBlessings = JsonHelper.FromJson<string>(Functions.DecompressString(activeBlessings)).ToHashSet<string>();
             LogInfo($"SENDCO ACTIVE BLESSINGS: {string.Join(", ", endlessData.activeBlessings)}");
+            endlessData.LoadData();
         }
 
         public void FillData(BinaryFormatter binaryFormatter, CryptoStream cryptoStream)
@@ -712,14 +714,26 @@ namespace AtOEndless
         [HarmonyPrefix]
         [HarmonyPatch(typeof(MapManager), "Awake")]
         public static void Awake(ref MapManager __instance) {
-            if(!refreshed) {
-                foreach (GameObject mapGO in __instance.mapList) {
-                    foreach(Transform transform in mapGO.transform) {
-                        if(transform.gameObject.name == "Nodes") {
-                            foreach(Transform transform2 in transform) {
+            if (!refreshed)
+            {
+                foreach (GameObject mapGO in __instance.mapList)
+                {
+                    foreach (Transform transform in mapGO.transform)
+                    {
+                        if (transform.gameObject.name == "Nodes")
+                        {
+                            foreach (Transform transform2 in transform)
+                            {
                                 GameObject nodeGO = transform2.gameObject;
                                 Node node = nodeGO.GetComponent<Node>();
-                                node.GetComponent<Node>().nodeData = Globals.Instance.GetNodeData(node.nodeData.NodeId);
+                                if (node.GetComponent<Node>().nodeData != null)
+                                {
+                                    node.GetComponent<Node>().nodeData = Globals.Instance.GetNodeData(node.nodeData.NodeId);
+                                }
+                                else
+                                {
+                                    LogInfo($"No Node Data for {transform2.gameObject.name}");
+                                }
                             }
                         }
                     }
@@ -875,7 +889,6 @@ namespace AtOEndless
 
                 int deterministicHashCode = AtOManager.Instance.GetGameId().GetDeterministicHashCode();
                 UnityEngine.Random.InitState(deterministicHashCode);
-
                 
                 List<EventReplyData> replies = [];
                 List<string> exclude = [];
@@ -900,20 +913,19 @@ namespace AtOEndless
                     }
                 }
 
-                if(replies.Count == 0) {
-                        EventReplyData blessingReplyData = blessingReplyPrefab.ShallowCopy();
-                        blessingReplyData.SsPerkData = null;
-                        blessingReplyData.SsPerkData1 = null;
-                        blessingReplyData.ReplyText = "None left";
-                        blessingReplyData.SsRewardText = "";
-                        blessingReplyData.SsRequirementUnlock = null;
-                        blessingReplyData.SsDustReward = 0;
-                        blessingReplyData.SsExperienceReward = 0;
-                        blessingReplyData.SsGoldReward = 0;
-                        blessingReplyData.SsFinishObeliskMap = false;
-                        blessingReplyData.SsEvent = Globals.Instance.GetEventData("e_endless_obelisk");
-                        replies.Add(blessingReplyData);
-                }
+                EventReplyData skipBlessingReplyData = blessingReplyPrefab.ShallowCopy();
+                skipBlessingReplyData.SsPerkData = null;
+                skipBlessingReplyData.SsPerkData1 = null;
+                skipBlessingReplyData.ReplyText = replies.Count == 0 ? "There are no more blessings to choose from." :  "Skip";
+                skipBlessingReplyData.SsRewardText = "";
+                skipBlessingReplyData.SsRequirementUnlock = null;
+                skipBlessingReplyData.SsDustReward = 0;
+                skipBlessingReplyData.SsExperienceReward = 0;
+                skipBlessingReplyData.SsGoldReward = 0;
+                skipBlessingReplyData.SsFinishObeliskMap = false;
+                skipBlessingReplyData.SsEvent = Globals.Instance.GetEventData("e_endless_obelisk");
+                replies.Add(skipBlessingReplyData);
+                
                 Globals.Instance.GetEventData("e_endless_blessing").Replys = [..replies];
             }
 
@@ -1040,7 +1052,7 @@ namespace AtOEndless
                         }
                     }
 
-                    obeliskReplyData.ReplyText = zoneCount == 1 ? "You are thrust into a portal of unknown color" : GetPortalString(AtOManager.Instance.GetMapZone(selectedNode.NodeId));
+                    obeliskReplyData.ReplyText = zoneCount == 1 ? "You are unable to focus and your mind races as you approach the obelisk." : GetPortalString(AtOManager.Instance.GetMapZone(selectedNode.NodeId));
                     obeliskReplyData.SsRewardText = "";
                     
                     obeliskReplyData.SsNodeTravel = selectedNode;
@@ -1055,25 +1067,25 @@ namespace AtOEndless
 
         public static Dictionary<Enums.Zone, string> portalStrings = new()
         {
-            { Enums.Zone.Senenthia, "grassy" },
-            { Enums.Zone.Faeborg, "icy" },
-            { Enums.Zone.Aquarfall, "swampy" },
-            { Enums.Zone.Velkarath, "molten" },
-            { Enums.Zone.Ulminin, "sandy" },
-            { Enums.Zone.Sahti, "salty" },
-            { Enums.Zone.VoidLow, "cosmic" }
+            { Enums.Zone.Senenthia, "a grassy" },
+            { Enums.Zone.Faeborg, "an icy" },
+            { Enums.Zone.Aquarfall, "a swampy" },
+            { Enums.Zone.Velkarath, "a molten" },
+            { Enums.Zone.Ulminin, "a sandy" },
+            { Enums.Zone.Sahti, "a salty" },
+            { Enums.Zone.VoidLow, "a cosmic" }
         };
 
         public static string GetPortalString(Enums.Zone zone)
         {
-            return $"Step into the {portalStrings.Get(zone)} portal.";
+            return $"Your focus on {portalStrings.Get(zone)} world.";
         }
 
         [HarmonyPrefix]
         [HarmonyPatch(typeof(EventManager), "FinalResolution")]
         public static void FinalResolutionPre(EventManager __instance, EventData ___currentEvent, EventReplyData ___replySelected) {
             if(___currentEvent.EventId == "e_endless_blessing") {
-                if(___replySelected != null) {
+                if(___replySelected != null && ___replySelected.SsAddCard1 != null) {
                     CardData blessingCard = ___replySelected.SsAddCard1;
 
                     LogInfo($"Selected blessing: {blessingCard.Id}");
@@ -1396,6 +1408,11 @@ namespace AtOEndless
             InitNewCard(newCard, ref ____CardItemByType, ref ____CardListByType, ref ____CardListByClass, ref ____CardListNotUpgraded, ref ____CardListNotUpgradedByClass, ref ____CardListByClassType, ref ____CardEnergyCost);
 
             return newCard;
+        }
+
+        public static CardData CreateCard()
+        {
+            
         }
 
         public static List<string> blessingCards = [
@@ -1754,82 +1771,86 @@ namespace AtOEndless
 
 
 
-                eventDataAllowPerks.EventName = "Endless Obelisk";
-                eventDataAllowPerks.Description = "Allow Perks";
-                eventDataAllowPerks.DescriptionAction = "Allow randomized perks at the end of each act?";
+                eventDataAllowPerks.EventName = "Endless Perks";
+                eventDataAllowPerks.Description = "At the end of each act you will be given a list of random perks to choose from. These perks are permanent and will last until the end of the run. These are purely stat based.";
+                eventDataAllowPerks.DescriptionAction = "Enable randomized perks at the end of each act?";
                 eventDataAllowPerks.EventId = "e_endless_allow_perks";
                 eventDataAllowPerks.Replys = [configReplyAllowPerksYes, configReplyAllowPerksNo];
                 eventDataAllowPerks.Init();
                 ____Events.Add(eventDataAllowPerks.EventId.ToLower(), eventDataAllowPerks);
 
-                eventDataAllowBlessings.EventName = "Endless Obelisk";
-                eventDataAllowBlessings.Description = "Allow Blessings";
-                eventDataAllowBlessings.DescriptionAction = "Allow randomized blessings at the end of acts?";
+                eventDataAllowBlessings.EventName = "Endless Blessings";
+                eventDataAllowBlessings.Description = "At the end of certain acts you will be given a list of random blessings to choose from. These blessings are permanent and will last until the end of the run. These have in-combat effects, similar to corruptions.";
+                eventDataAllowBlessings.DescriptionAction = "Enable randomized blessings at the end of acts?";
                 eventDataAllowBlessings.EventId = "e_endless_allow_blessings";
                 eventDataAllowBlessings.Replys = [configReplyAllowBlessings, configReplyAllowBlessingsStarting4, configReplyAllowBlessingsEvery4, configReplyAllowBlessingsAfterVoid, configReplyAllowBlessingsNo];
                 eventDataAllowBlessings.Init();
                 ____Events.Add(eventDataAllowBlessings.EventId.ToLower(), eventDataAllowBlessings);
 
-                eventDataAllowAdditionalLevels.EventName = "Endless Obelisk";
-                eventDataAllowAdditionalLevels.Description = "Allow Additional Levels";
-                eventDataAllowAdditionalLevels.DescriptionAction = "Allow additional levels past 5, allowing you to select traits from the other side of the tree?";
+                eventDataAllowAdditionalLevels.EventName = "Unshackled Growth";
+                eventDataAllowAdditionalLevels.Description = "Change the character level cap to allow leveling up to level 9. This will allow you to select traits from the other side of the tree.";
+                eventDataAllowAdditionalLevels.DescriptionAction = "Enable additional levels?";
                 eventDataAllowAdditionalLevels.EventId = "e_endless_allow_additional_levels";
                 eventDataAllowAdditionalLevels.Replys = [configReplyAllowAdditionalLevelsYes, configReplyAllowAdditionalLevelsNo];
                 eventDataAllowAdditionalLevels.Init();
                 ____Events.Add(eventDataAllowAdditionalLevels.EventId.ToLower(), eventDataAllowAdditionalLevels);
 
-                eventDataRequireAll.EventName = "Endless Obelisk";
-                eventDataRequireAll.Description = "Require All Before Void";
+                eventDataRequireAll.EventName = "Adventure-like";
+                eventDataRequireAll.Description = "This will require you to complete all other acts before being allowed to enter the void act. This is similar to how adventure mode works. Each cycle will restart this requirement.";
                 eventDataRequireAll.DescriptionAction = "Require all other acts to be completed per cycle before void act?";
                 eventDataRequireAll.EventId = "e_endless_require_all_before_void";
                 eventDataRequireAll.Replys = [configReplyRequireAllYes, configReplyRequireAllNo];
                 eventDataRequireAll.Init();
                 ____Events.Add(eventDataRequireAll.EventId.ToLower(), eventDataRequireAll);
 
-                eventDataUniqueZones.EventName = "Endless Obelisk";
-                eventDataUniqueZones.Description = "Unique Zones";
+                eventDataUniqueZones.EventName = "Déjà Vu";
+                eventDataUniqueZones.Description = "This will cause each zone to only be encountered once per cycle. For example, if you encounter the Faeborg Forest act, you will not be able to encounter it again until you have completed The Void act and started a new cycle.";
                 eventDataUniqueZones.DescriptionAction = "Only encounter each zone once per cycle?";
                 eventDataUniqueZones.EventId = "e_endless_unique_zones";
                 eventDataUniqueZones.Replys = [configReplyUniqueZonesYes, configReplyUniqueZonesNo];
                 eventDataUniqueZones.Init();
                 ____Events.Add(eventDataUniqueZones.EventId.ToLower(), eventDataUniqueZones);
 
-                eventDataAllowRepeats.EventName = "Endless Obelisk";
-                eventDataAllowRepeats.Description = "Allow Repeat Zones";
+                eventDataAllowRepeats.EventName = "Déjà Vu... Again?";
+                eventDataAllowRepeats.Description = "This will allow the same zone to be encountered after itself. For example, you could encounter the Faeborg Forest act, and then encounter the Faeborg Forest act again.";
                 eventDataAllowRepeats.DescriptionAction = "Allow the same zone to be encountered after itself?";
                 eventDataAllowRepeats.EventId = "e_endless_allow_repeats";
                 eventDataAllowRepeats.Replys = [configReplyAllowRepeatsYes, configReplyAllowRepeatsNo];
                 eventDataAllowRepeats.Init();
                 ____Events.Add(eventDataAllowRepeats.EventId.ToLower(), eventDataAllowRepeats);
 
-                eventDataZoneCount.EventName = "Endless Obelisk";
-                eventDataZoneCount.Description = "Zones to Pick From";
+                eventDataZoneCount.EventName = "Oracle's Vision";
+                eventDataZoneCount.Description = "Choose how many different zones you can be offered at the obelisk. Choosing 'All' will allow you to be offered any of the remaining zones that you have not completed yet in the current cycle. Choosing 1 will only offer you one random zone.";
                 eventDataZoneCount.DescriptionAction = "How many random zones to pick from at the obelisk?";
                 eventDataZoneCount.EventId = "e_endless_zone_count";
                 eventDataZoneCount.Replys = [configReplyZoneCount1, configReplyZoneCount2, configReplyZoneCount3, configReplyZoneCountAll];
                 eventDataZoneCount.Init();
                 ____Events.Add(eventDataZoneCount.EventId.ToLower(), eventDataZoneCount);
             }
+            Sprite endlessObeliskSprite = LoadSprite("AtOEndless.Assets.endless.png");
 
-            if(____Events.TryGetValue("e_sen34_a", out EventData eventPrefab)) {
+            if(____Events.TryGetValue("e_sen34_a", out EventData eventPrefab))
+            {
                 EventData eventDataEndlessObelisk = UnityEngine.Object.Instantiate<EventData>(eventPrefab);
                 eventDataEndlessObelisk.EventName = "Endless Obelisk";
-                eventDataEndlessObelisk.Description = "Ahhhhhhhhhhhhhhhhhhhh!";
-                eventDataEndlessObelisk.DescriptionAction = "AHHHHHHHHHHHHHHHH!";
+                eventDataEndlessObelisk.Description = "A large floating obelisk stands before you, radiating a strange energy. It seems to be a gateway to other worlds.";
+                eventDataEndlessObelisk.DescriptionAction = "Approach the obelisk and envision a world you wish to visit.";
                 eventDataEndlessObelisk.EventId = "e_endless_obelisk";
                 eventDataEndlessObelisk.Replys = [];
+                eventDataEndlessObelisk.EventSpriteBook = endlessObeliskSprite;
                 eventDataEndlessObelisk.Init();
                 ____Events.Add(eventDataEndlessObelisk.EventId.ToLower(), eventDataEndlessObelisk);
             }
 
-            if(____Events.TryGetValue("e_challenge_next", out EventData perkPrefab)) {
+            if (____Events.TryGetValue("e_challenge_next", out EventData perkPrefab)) {
                 EventData eventDataEndlessPerk = UnityEngine.Object.Instantiate<EventData>(perkPrefab);
-                eventDataEndlessPerk.EventName = "Endless Obelisk";
-                eventDataEndlessPerk.Description = "Pick yo perk";
-                eventDataEndlessPerk.DescriptionAction = "Choose it yo";
+                eventDataEndlessPerk.EventName = "Power of the Obelisk";
+                eventDataEndlessPerk.Description = "As you approach the obelisk you feel a surge of power course through your veins.";
+                eventDataEndlessPerk.DescriptionAction = "Channel this power into a permanent perk.";
                 eventDataEndlessPerk.EventId = "e_endless_perk";
                 eventDataEndlessPerk.Requirement = Globals.Instance.GetRequirementData("endless_allow_perks");
                 eventDataEndlessPerk.Replys = [];
+                eventDataEndlessPerk.EventSpriteBook = endlessObeliskSprite;
                 eventDataEndlessPerk.ReplyRandom = 0;
                 eventDataEndlessPerk.Init();
                 ____Events.Add(eventDataEndlessPerk.EventId.ToLower(), eventDataEndlessPerk);
@@ -1837,12 +1858,13 @@ namespace AtOEndless
 
             if(____Events.TryGetValue("e_challenge_next", out EventData blessingPrefab)) {
                 EventData eventDataEndlessBlessing = UnityEngine.Object.Instantiate<EventData>(blessingPrefab);
-                eventDataEndlessBlessing.EventName = "Endless Obelisk";
-                eventDataEndlessBlessing.Description = "Pick yo blessing";
-                eventDataEndlessBlessing.DescriptionAction = "Choose it yo";
+                eventDataEndlessBlessing.EventName = "Blessing of the Obelisk";
+                eventDataEndlessBlessing.Description = "Getting closer to the obelisk you feel a strange energy enveloping you, as if the obelisk is blessing you with its power.";
+                eventDataEndlessBlessing.DescriptionAction = "Receive a blessing to aid you in your journey.";
                 eventDataEndlessBlessing.EventId = "e_endless_blessing";
                 eventDataEndlessBlessing.Requirement = Globals.Instance.GetRequirementData("endless_pick_blessing");
                 eventDataEndlessBlessing.Replys = [];
+                eventDataEndlessBlessing.EventSpriteBook = endlessObeliskSprite;
                 eventDataEndlessBlessing.ReplyRandom = 0;
                 eventDataEndlessBlessing.Init();
                 ____Events.Add(eventDataEndlessBlessing.EventId.ToLower(), eventDataEndlessBlessing);
@@ -1896,6 +1918,22 @@ namespace AtOEndless
             GameManager.Instance.DebugShow();
         }
 
+        private static Sprite LoadSprite(string filename)
+        {
+            Texture2D texture;
+            Image img;
+            System.Reflection.Assembly assembly = System.Reflection.Assembly.GetExecutingAssembly();
+            using(Stream stream = assembly.GetManifestResourceStream(filename)) {
+                byte[] data = new byte[stream.Length];
+                stream.Read(data, 0, data.Length);
+                img = Image.FromStream(stream);
+                texture = new Texture2D(img.Width, img.Height);
+                texture.LoadImage(data);
+            }
+            LogInfo($"Loaded {filename} w:{img.Width} h:{img.Height}");
+            Sprite mySprite = Sprite.Create(texture, new Rect(0.0f, 0.0f, img.Width, img.Height), new Vector2(0.5f, 0.5f));
+            return mySprite;
+        }
 
         public static Dictionary<Enums.Zone, List<string>> RemoveRequirementsByZone = new()
         {
@@ -3197,8 +3235,6 @@ namespace AtOEndless
                 DamagePercentBonusValue = 0.0f,
                 DamagePercentBonusValue2 = 0.0f,
                 DamagePercentBonusValue3 = 0.0f,
-                DamageToTarget = 0,
-                DamageToTargetType = Enums.DamageType.None,
                 DestroyAfterUse = false,
                 DestroyAfterUses = 0,
                 DestroyEndOfTurn = false,
